@@ -69,7 +69,11 @@ jobs:
                   *jotego/cps3.git|*jotego/pocket.git|*pocket.git) git config -f .gitmodules submodule.$path.update none ;;
                 esac
               done
-          git submodule update --init --recommend-shallow --jobs 4 \
+          # --recursive picks up nested public submodules (e.g. jt12/jt49,
+          # jt12/jt89). Private nested submodules — if any appeared upstream —
+          # would be skipped because their parent's `submodule.<path>.update`
+          # is set to `none` above.
+          git submodule update --init --recursive --recommend-shallow --jobs 4 \
             modules/fx68k modules/jt12 modules/jt51 modules/jt5205 \
             modules/jt6295 modules/jt7759 modules/jt8255 modules/jt900h \
             modules/jtdsp16 modules/jteeprom modules/jtkcpu modules/jtopl \
