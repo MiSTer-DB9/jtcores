@@ -2,12 +2,9 @@ name: Pocket
 
 on:
   workflow_dispatch:
-  repository_dispatch:
-    types: rebuild
 jobs:
   list_cores:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'jotego'  # [MiSTer-DB9] gate jotego-only workflows on this fork
     outputs:
       cores: ${{ steps.generate-matrix.outputs.cores }}
     steps:
@@ -32,7 +29,6 @@ jobs:
 
   compile_cores20:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'jotego'  # [MiSTer-DB9] gate jotego-only workflows on this fork
     defaults:
       run:
         shell: bash

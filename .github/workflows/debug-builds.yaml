@@ -2,15 +2,9 @@ name: "Debug builds (SiDi128)"
 
 on:
   workflow_dispatch:
-  # pull_request:
-  repository_dispatch:
-    types: rebuild
-  # schedule:
-  #   - cron: '0 3 * * 4' # runs every Thursday night
 jobs:
   list_cores:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'jotego'  # [MiSTer-DB9] gate jotego-only workflows on this fork
     defaults:
       run:
         shell: bash
@@ -38,7 +32,6 @@ jobs:
 
   compile_cores20:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'jotego'  # [MiSTer-DB9] gate jotego-only workflows on this fork
     defaults:
       run:
         shell: bash
@@ -66,7 +59,6 @@ jobs:
 
   join_artifacts:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'jotego'  # [MiSTer-DB9] gate jotego-only workflows on this fork
     needs: [ compile_cores20 ]
     if: ${{ always() }} # upload the results even if some core did not compile correctly
     steps:

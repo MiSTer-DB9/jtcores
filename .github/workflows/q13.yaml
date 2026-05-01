@@ -5,7 +5,6 @@ on:
 jobs:
   list_cores:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'jotego'  # [MiSTer-DB9] gate jotego-only workflows on this fork
     defaults:
       run:
         shell: bash
@@ -33,7 +32,6 @@ jobs:
 
   compile_cores13:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'jotego'  # [MiSTer-DB9] gate jotego-only workflows on this fork
     defaults:
       run:
         shell: bash
