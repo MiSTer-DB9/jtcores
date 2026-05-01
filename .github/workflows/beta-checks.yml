@@ -11,6 +11,7 @@ on:
 jobs:
   check-beta-keys:
     runs-on: ubuntu-latest
+    if: github.repository_owner == 'jotego'  # [MiSTer-DB9] gate jotego-only workflows on this fork
     steps:
       - name: Checkout
         uses: actions/checkout@v4

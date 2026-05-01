@@ -1,0 +1,150 @@
+name: Compile mister (MiSTer-DB9)
+
+# [MiSTer-DB9 BEGIN] - mister-only build + GH Release upload
+# Mirrors jotego's compile-all.yaml `mister-pocket` job, restricted to:
+#   - mister target only (no mist Q13, no pocket private submodule, no sidi)
+#   - DB9 / Saturn key-gate enabled via MASTER_ROOT_HEX secret
+#   - Output uploaded to this repo's GH Releases (not jotego.es FTP)
+# [MiSTer-DB9 END]
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: rebuild
+  schedule:
+    - cron: '0 4 * * *' # nightly 4am UTC (offset from jotego's 3am)
+
+permissions:
+  contents: write   # for GH Release upload
+
+jobs:
+  list_cores:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      cores: ${{ steps.generate-matrix.outputs.cores }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: generate-matrix
+        run: |
+          cd cores
+          CORES='['
+          for i in *; do
+            if [[ -e $i/cfg/macros.def && ! -e $i/cfg/skip ]]; then
+              if [ "$CORES" != '[' ]; then CORES="$CORES, "; fi
+              CORES="$CORES \"$i\""
+            fi
+          done
+          CORES="$CORES ]"
+          echo $CORES
+          echo "cores=${CORES}" >> $GITHUB_OUTPUT
+
+  mister:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    needs:
+      - list_cores
+    strategy:
+      fail-fast: false
+      matrix:
+        core: ${{ fromJSON(needs.list_cores.outputs.cores) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # No `submodules: 'recursive'` — pocket and cps3 submodules are
+          # private and would abort the clone. Init only the public ones.
+          submodules: false
+      - name: Init public submodules
+        run: |
+          # Skip submodules whose URL is on jotego.es / private repos.
+          git submodule init
+          git config -f .gitmodules --get-regexp '^submodule\..*\.url$' \
+            | while read key url; do
+                path=$(echo "$key" | sed -E 's/^submodule\.(.*)\.url$/\1/')
+                case "$url" in
+                  *jotego/cps3.git|*jotego/pocket.git|*pocket.git) git config -f .gitmodules submodule.$path.update none ;;
+                esac
+              done
+          git submodule update --init --recommend-shallow --jobs 4 \
+            modules/fx68k modules/jt12 modules/jt51 modules/jt5205 \
+            modules/jt6295 modules/jt7759 modules/jt8255 modules/jt900h \
+            modules/jtdsp16 modules/jteeprom modules/jtkcpu modules/jtopl \
+            modules/jttms modules/jt680x/crasm || true
+          # Some submodules need explicit checkout after init
+          for m in modules/fx68k modules/jt12 modules/jt51 modules/jt5205 \
+                   modules/jt6295 modules/jt7759 modules/jt8255 modules/jt900h \
+                   modules/jtdsp16 modules/jteeprom modules/jtkcpu modules/jtopl \
+                   modules/jttms; do
+            (cd "$m" && git checkout HEAD -- . 2>/dev/null) || true
+          done
+      # [MiSTer-DB9-Pro BEGIN] - materialize key-gate secret pre-build
+      - name: Materialize MASTER_ROOT for key gate
+        env:
+          MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+        run: |
+          # The shared materialize_secret.sh detects sys/db9_key_gate.sv at pwd.
+          # In jtcores, the gate lives at modules/jtframe/target/mister/hdl/sys/.
+          # Run from there so the script writes db9_key_secret.vh in place.
+          if [[ -z "${MASTER_ROOT_HEX:-}" ]] || [[ ! "${MASTER_ROOT_HEX}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "[DB9-Key v1.5] WARNING: MASTER_ROOT_HEX not set/malformed — build will ship LOCKED (every key file rejected)"
+            exit 0
+          fi
+          LE_HEX=$(echo -n "${MASTER_ROOT_HEX}" | fold -w2 | tac | tr -d '\n')
+          cat > modules/jtframe/target/mister/hdl/sys/db9_key_secret.vh <<EOF
+          // CI-injected per build run; do not commit. Generated from MASTER_ROOT_HEX.
+          // HEX is byte-reversed so Verilog's bit 0..7 of MASTER_ROOT = byte 0 of master_root.bin.
+          \`ifndef DB9_KEY_SECRET_VH
+          \`define DB9_KEY_SECRET_VH
+          \`define MASTER_ROOT 256'h${LE_HEX}
+          \`endif
+          EOF
+          echo "[DB9-Key v1.5] sys/db9_key_secret.vh materialized (LE-encoded)"
+      # [MiSTer-DB9-Pro END]
+      - id: compile
+        run: |
+          docker run -e BETAKEY=${{ secrets.BETAKEY }} --network host \
+            -v `pwd`:/jtcores jotego/jtcore20 \
+            /jtcores/modules/jtframe/devops/xjtcore.sh ${{matrix.core}} mister
+      - id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-mister-${{ matrix.core }}
+          path: release
+          retention-days: 1
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [ mister ]
+    if: ${{ always() }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          pattern: release-mister-*
+          merge-multiple: true
+      - name: Stamp release zip
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          ARTIFACT_NAME="jtcores-mister-db9-${SHORT_SHA}.zip"
+          echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=mister-${SHORT_SHA}" >> "$GITHUB_ENV"
+          ls -l release/* || true
+          zip -r "${ARTIFACT_NAME}" release
+          ls -l "${ARTIFACT_NAME}"
+      - name: Upload to GH Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: jtcores mister-db9 ${{ env.RELEASE_TAG }}
+          files: ${{ env.ARTIFACT_NAME }}
+          body: |
+            Automated nightly build of jtcores for the MiSTer-DB9 fork.
+            Built from `${{ github.sha }}` against `mister` target only
+            (mist / pocket / sidi / sidi128 are out of scope for this fork).
+            DB9MD / DB15 / Saturn (key-gated) controllers supported.
