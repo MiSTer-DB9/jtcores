@@ -11,6 +11,11 @@ jtframe/target/mister:
     - sys.qip
     - pll.qip
     - joydb15.v
+    # [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn baseline files
+    - joydb9md.v
+    - joydb9saturn.v
+    - joydb.sv
+    # [MiSTer-DB9 END]
   - when: [ JTFRAME_SAVEGAME ]
     get:
       - jtframe_mister_cartsave.v

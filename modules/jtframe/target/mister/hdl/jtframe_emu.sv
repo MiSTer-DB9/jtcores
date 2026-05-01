@@ -148,14 +148,17 @@ module emu
     output [ 7:0] DDRAM_BE,
     output        DDRAM_WE,
 
+    // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_IO widened to 8 pins; USER_PP per-pin push-pull mask
     // Open-drain User port.
     // 0 - D+/RX
     // 1 - D-/TX
     // 2..6 - USR2..USR6
+    // 7 - USR7 (added by DB9 fork for SNAC8 / 8-pin mappings)
     // Set USER_OUT to 1 to read from USER_IN.
-    input   [6:0] USER_IN,
-    output  [6:0] USER_OUT,
-    output        db15_en,
+    input   [7:0] USER_IN,
+    output  [7:0] USER_OUT,
+    output  [7:0] USER_PP,
+    // [MiSTer-DB9 END]
     output        uart_en,
     output        gun_border_en,
     output        show_osd,
@@ -413,7 +416,9 @@ u_frame(
     // Extension port (fake USB3)
     .USER_OUT       ( USER_OUT       ),
     .USER_IN        ( USER_IN        ),
-    .db15_en        ( db15_en        ),
+    // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_PP per-pin push-pull mask (replaces db15_en)
+    .USER_PP        ( USER_PP        ),
+    // [MiSTer-DB9 END]
     .uart_en        ( uart_en        ),
     .game_rx        ( game_rx        ), // core-specific UART
     .game_tx        ( game_tx        ),
