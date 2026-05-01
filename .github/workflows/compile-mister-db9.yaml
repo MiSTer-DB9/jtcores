@@ -60,6 +60,12 @@ jobs:
           submodules: false
       - name: Init public submodules
         run: |
+          # Rewrite git@github.com: SSH URLs to https — runner has no SSH key,
+          # so submodules declared with ssh URLs (e.g. jt900h, jt680x/crasm)
+          # would otherwise abort `git submodule update` mid-flight, preventing
+          # the recursive walk from reaching nested public submodules like
+          # modules/jt12/jt49 and modules/jt12/jt89.
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
           # Skip submodules whose URL is on jotego.es / private repos.
           git submodule init
           git config -f .gitmodules --get-regexp '^submodule\..*\.url$' \
