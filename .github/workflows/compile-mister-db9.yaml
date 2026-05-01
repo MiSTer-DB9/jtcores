@@ -26,7 +26,7 @@ jobs:
     outputs:
       cores: ${{ steps.generate-matrix.outputs.cores }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: generate-matrix
         run: |
           cd cores
@@ -53,7 +53,7 @@ jobs:
       matrix:
         core: ${{ fromJSON(needs.list_cores.outputs.cores) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # No `submodules: 'recursive'` — pocket and cps3 submodules are
           # private and would abort the clone. Init only the public ones.
@@ -110,7 +110,7 @@ jobs:
             -v `pwd`:/jtcores jotego/jtcore20 \
             /jtcores/modules/jtframe/devops/xjtcore.sh ${{matrix.core}} mister
       - id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-mister-${{ matrix.core }}
           path: release
@@ -121,9 +121,9 @@ jobs:
     needs: [ mister ]
     if: ${{ always() }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release
           pattern: release-mister-*
@@ -138,7 +138,7 @@ jobs:
           zip -r "${ARTIFACT_NAME}" release
           ls -l "${ARTIFACT_NAME}"
       - name: Upload to GH Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: jtcores mister-db9 ${{ env.RELEASE_TAG }}

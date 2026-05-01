@@ -1,0 +1,70 @@
+name: Sync jotego upstream
+
+# [MiSTer-DB9 BEGIN] - upstream sync workflow (jotego/jtcores → master)
+# Periodically pulls jotego upstream into our master branch using the
+# whitespace-ignoring merge strategy that the per-core forks already use
+# in Forks_MiSTer/fork_ci_template/.github/sync_release.sh. On a clean
+# merge we push master and the next nightly compile-mister-db9 run picks
+# up the new HEAD; on conflict we abort and surface a workflow failure
+# for the maintainer to rebase by hand. Never force-pushes.
+# [MiSTer-DB9 END]
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-jotego-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure git identity
+        run: |
+          git config user.email "ci@mister-db9.local"
+          git config user.name "MiSTer-DB9 CI"
+
+      - name: Fetch jotego upstream
+        run: |
+          git remote add upstream https://github.com/jotego/jtcores.git
+          git fetch --no-tags upstream master
+
+      - name: Detect new commits
+        id: detect
+        run: |
+          BEHIND=$(git rev-list --count master..upstream/master)
+          AHEAD=$(git rev-list --count upstream/master..master)
+          echo "behind=${BEHIND}" >> "$GITHUB_OUTPUT"
+          echo "ahead=${AHEAD}" >> "$GITHUB_OUTPUT"
+          echo "Master is ${AHEAD} ahead, ${BEHIND} behind upstream/master"
+
+      - name: Merge upstream
+        if: steps.detect.outputs.behind != '0'
+        run: |
+          # Mirror the per-core fork strategy: ignore whitespace-only diffs to
+          # tolerate jotego's occasional reformatting churn. Anything else is
+          # a real conflict and bails to manual review.
+          if git merge -Xignore-all-space --no-edit upstream/master; then
+            echo "Merge clean; pushing master."
+            git push origin master
+          else
+            echo "::error::Upstream merge conflict — manual rebase required"
+            git merge --abort || true
+            exit 1
+          fi
+
+      - name: Nothing to do
+        if: steps.detect.outputs.behind == '0'
+        run: echo "Already up to date with jotego/jtcores master."
