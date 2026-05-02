@@ -81,14 +81,14 @@ jobs:
           # is set to `none` above.
           git submodule update --init --recursive --recommend-shallow --jobs 4 \
             modules/fx68k modules/jt12 modules/jt51 modules/jt5205 \
-            modules/jt6295 modules/jt7759 modules/jt8255 modules/jt900h \
-            modules/jtdsp16 modules/jteeprom modules/jtkcpu modules/jtopl \
-            modules/jttms modules/jt680x/crasm || true
+            modules/jt539 modules/jt6295 modules/jt7759 modules/jt8255 \
+            modules/jt900h modules/jtdsp16 modules/jteeprom modules/jtkcpu \
+            modules/jtopl modules/jttms modules/jt680x/crasm || true
           # Some submodules need explicit checkout after init
           for m in modules/fx68k modules/jt12 modules/jt51 modules/jt5205 \
-                   modules/jt6295 modules/jt7759 modules/jt8255 modules/jt900h \
-                   modules/jtdsp16 modules/jteeprom modules/jtkcpu modules/jtopl \
-                   modules/jttms; do
+                   modules/jt539 modules/jt6295 modules/jt7759 modules/jt8255 \
+                   modules/jt900h modules/jtdsp16 modules/jteeprom modules/jtkcpu \
+                   modules/jtopl modules/jttms; do
             (cd "$m" && git checkout HEAD -- . 2>/dev/null) || true
           done
       # [MiSTer-DB9-Pro BEGIN] - materialize key-gate secret pre-build
