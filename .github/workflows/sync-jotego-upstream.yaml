@@ -57,13 +57,62 @@ jobs:
           # tolerate jotego's occasional reformatting churn. Anything else is
           # a real conflict and bails to manual review.
           if git merge -Xignore-all-space --no-edit upstream/master; then
-            echo "Merge clean; pushing master."
-            git push origin master
+            echo "Merge text-clean; running guards before push."
           else
             echo "::error::Upstream merge conflict — manual rebase required"
             git merge --abort || true
             exit 1
           fi
+
+      # [MiSTer-DB9-Pro BEGIN] - post-merge guards: marker balance + key-gate regression
+      - name: Marker + key-gate regression guards
+        if: steps.detect.outputs.behind != '0'
+        run: |
+          fail=0
+          MISTER=modules/jtframe/target/mister/hdl
+          # Marker balance: -ho counts occurrences (not lines), so multi-marker
+          # one-liners are accounted correctly.
+          for tag in "MiSTer-DB9" "MiSTer-DB9-Pro"; do
+            B=$(grep -rho "\[$tag BEGIN\]" modules/jtframe .github 2>/dev/null | wc -l)
+            E=$(grep -rho "\[$tag END\]"   modules/jtframe .github 2>/dev/null | wc -l)
+            if [[ "$B" != "$E" ]]; then
+              echo "::error::$tag markers unbalanced (BEGIN=$B END=$E)"
+              fail=1
+            fi
+          done
+          # saturn_unlocked must NOT be tied back to 0. Pinned paths (only three
+          # files reference it). Catches wire/assign/reg with 1'b0/1'd0/0; skips
+          # // comment lines (joydb.sv:23 documents the legacy tie-off pattern).
+          if grep -nE "saturn_unlocked\s*=\s*(1'[bdh]0|0)\b" \
+               "$MISTER/sys/hps_io.sv" "$MISTER/jtframe_mister.sv" "$MISTER/joydb.sv" 2>/dev/null \
+             | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//'; then
+            echo "::error::saturn_unlocked stub regression — Phase 2 wiring lost"
+            fail=1
+          fi
+          # Key gate cmd hook must reach uio_block.cmd in hps_io
+          if ! grep -q "uio_block\.cmd == 16'hFE" "$MISTER/sys/hps_io.sv"; then
+            echo "::error::db9_key_gate cmd hook missing/renamed in hps_io.sv"
+            fail=1
+          fi
+          # joydb.sv must AND-gate Saturn arms with saturn_unlocked (order-agnostic, & or &&)
+          if ! grep -qE "(saturn_unlocked\s*&{1,2}\s*joy_saturn_en|joy_saturn_en\s*&{1,2}\s*saturn_unlocked)" \
+                "$MISTER/joydb.sv"; then
+            echo "::error::joydb.sv saturn AND-gate missing"
+            fail=1
+          fi
+          # sys.qip must register all three key-gate files (single read)
+          n=$(grep -cE "siphash24\.v|db9_key_gate\.sv|db9_key_secret\.vh" "$MISTER/sys/sys.qip")
+          if [[ "$n" -lt 3 ]]; then
+            echo "::error::sys.qip missing one or more key-gate file references (found $n/3)"
+            fail=1
+          fi
+          [[ $fail -eq 0 ]] || exit 1
+
+      - name: Push merged master
+        if: steps.detect.outputs.behind != '0'
+        run: |
+          git push origin master
+      # [MiSTer-DB9-Pro END]
 
       - name: Nothing to do
         if: steps.detect.outputs.behind == '0'

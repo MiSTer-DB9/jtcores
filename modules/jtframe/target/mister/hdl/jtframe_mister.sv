@@ -281,8 +281,8 @@ wire [7:0]  joy_in, joy_out;
 wire [7:0]  joy_user_pp;
 wire [15:0] joy_raw;
 // [MiSTer-DB9 END]
-// [MiSTer-DB9-Pro BEGIN] - Saturn key gate (Phase 1: hardwired off; Phase 2 wires hps_io UIO_DB9_KEY)
-wire        saturn_unlocked = 1'b0;
+// [MiSTer-DB9-Pro BEGIN] - Saturn key gate v1.5 (driven by hps_io UIO_DB9_KEY 0xFE bytestream)
+wire        saturn_unlocked;
 // [MiSTer-DB9-Pro END]
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: full 128b hps_io status (upper 64b carry UserIO Joystick selector)
 wire [127:0] status_full;
@@ -542,6 +542,9 @@ hps_io #(
     .clk_sys         ( clk_rom        ),
     .HPS_BUS         ( HPS_BUS        ),
 
+    // [MiSTer-DB9-Pro BEGIN] - Saturn key gate v1.5 output
+    .saturn_unlocked ( saturn_unlocked ),
+    // [MiSTer-DB9-Pro END]
     .buttons         ( buttons        ),
     // [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: capture full 128b status; expose lower 64b to upstream via `assign status`
     .status          ( status_full    ),
