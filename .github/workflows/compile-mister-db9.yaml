@@ -141,7 +141,10 @@ jobs:
       - name: Stamp release zip
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
-          ARTIFACT_NAME="jtcores-mister-db9-${SHORT_SHA}.zip"
+          # Asset name is stable (no SHA) so Distribution_MiSTer's
+          # `releases/latest/download/jtcores-mister-db9.zip` URL resolves.
+          # The tag carries the SHA for traceability.
+          ARTIFACT_NAME="jtcores-mister-db9.zip"
           echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=mister-${SHORT_SHA}" >> "$GITHUB_ENV"
           ls -l release/* || true
