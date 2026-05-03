@@ -114,11 +114,39 @@ jobs:
           EOF
           echo "[DB9-Key v1.5] sys/db9_key_secret.vh materialized (LE-encoded)"
       # [MiSTer-DB9-Pro END]
-      - id: compile
+      # [MiSTer-DB9 BEGIN] - cps15 needs more jtseed retries (upstream timing issue, jotego/jtcores#1389)
+      - id: compile-cps15
+        if: ${{ matrix.core == 'cps15' }}
+        run: |
+          # Same flow as xjtcore.sh but with jtseed 20 instead of 6.
+          # Each seed ~14 min; 20 seeds * 14 = ~4.5h, under runner 6h cap.
+          # Stops on first PASS (jtseed.last semantics).
+          docker run -e BETAKEY=${{ secrets.BETAKEY }} --network host \
+            -v `pwd`:/jtcores jotego/jtcore20 -c '
+              set -e
+              git config --global --add safe.directory /jtcores
+              cd /jtcores
+              export JTROOT=$(pwd)
+              export JTFRAME=$JTROOT/modules/jtframe
+              source $JTFRAME/bin/setprj.sh > /dev/null
+              export PATH=$PATH:/usr/local/go/bin
+              if [ -z "$BETAKEY" ]; then
+                  BETAKEY=$(printf "%04X%04X" $RANDOM $RANDOM)
+              fi
+              export JTUTIL=/jtutil
+              mkdir -p $JTUTIL
+              printf "%08x" 0x$BETAKEY | xxd -r -p > $JTUTIL/beta.bin
+              jtframe mra --nodbg --skipROM --skipPocket cps15
+              jtseed 20 cps15 -mister --nodbg --nolinter
+              rm -rf $JTROOT/cores/cps15/mister
+            '
+      - id: compile-other
+        if: ${{ matrix.core != 'cps15' }}
         run: |
           docker run -e BETAKEY=${{ secrets.BETAKEY }} --network host \
             -v `pwd`:/jtcores jotego/jtcore20 \
             /jtcores/modules/jtframe/devops/xjtcore.sh ${{matrix.core}} mister
+      # [MiSTer-DB9 END]
       - id: upload
         uses: actions/upload-artifact@v7
         with:
