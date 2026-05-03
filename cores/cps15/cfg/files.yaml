@@ -2,6 +2,9 @@ cps15:
   - get:
     - jtcps15_game.v
     - qsound.yaml
+    # [MiSTer-DB9 BEGIN] - timing closure SDC for fork load
+    - cps15_db9_fork.sdc
+    # [MiSTer-DB9 END]
 cps1:
   - get:
     - jtcps1_obj.v
