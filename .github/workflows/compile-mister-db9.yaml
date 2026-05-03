@@ -126,6 +126,32 @@ jobs:
           path: release
           retention-days: 1
       # [MiSTer-DB9 BEGIN] - STA reports on failure (timing diagnosis)
+      - id: dump-failing-paths
+        if: ${{ failure() }}
+        run: |
+          # On compile failure, re-run STA with report_timing to dump the
+          # actual worst paths (the default flow only emits summary slack).
+          if [ ! -d "cores/${{ matrix.core }}/mister/db" ]; then
+            echo "No quartus DB for ${{ matrix.core }} — skipping path dump"
+            exit 0
+          fi
+          CORE="${{ matrix.core }}"
+          cat > /tmp/report_paths.tcl <<TCL
+          project_open jt${CORE}
+          create_timing_netlist
+          read_sdc
+          update_timing_netlist
+          report_timing -setup -npaths 20 -detail full_path \\
+              -file /jtcores/cores/${CORE}/mister/output_files/worst_setup_paths.txt
+          report_timing -setup -npaths 20 -detail summary \\
+              -file /jtcores/cores/${CORE}/mister/output_files/worst_setup_summary.txt
+          project_close
+          TCL
+          docker run --rm \
+            -v `pwd`:/jtcores \
+            -v /tmp/report_paths.tcl:/tmp/report_paths.tcl:ro \
+            --workdir /jtcores/cores/${CORE}/mister \
+            jotego/jtcore20 quartus_sta -t /tmp/report_paths.tcl || true
       - id: upload-sta-on-failure
         if: ${{ failure() }}
         uses: actions/upload-artifact@v7
@@ -135,6 +161,7 @@ jobs:
             cores/${{ matrix.core }}/mister/output_files/*.sta.*
             cores/${{ matrix.core }}/mister/output_files/*.fit.*
             cores/${{ matrix.core }}/mister/output_files/*.map.*
+            cores/${{ matrix.core }}/mister/output_files/worst_*.txt
             log/mister/*.log
           retention-days: 7
           if-no-files-found: ignore
