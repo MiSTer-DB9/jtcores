@@ -125,6 +125,20 @@ jobs:
           name: release-mister-${{ matrix.core }}
           path: release
           retention-days: 1
+      # [MiSTer-DB9 BEGIN] - STA reports on failure (timing diagnosis)
+      - id: upload-sta-on-failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: sta-${{ matrix.core }}
+          path: |
+            cores/${{ matrix.core }}/mister/output_files/*.sta.*
+            cores/${{ matrix.core }}/mister/output_files/*.fit.*
+            cores/${{ matrix.core }}/mister/output_files/*.map.*
+            log/mister/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+      # [MiSTer-DB9 END]
 
   release:
     runs-on: ubuntu-latest
