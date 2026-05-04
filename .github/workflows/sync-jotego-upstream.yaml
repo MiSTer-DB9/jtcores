@@ -1,0 +1,164 @@
+name: Sync jotego upstream
+
+# [MiSTer-DB9 BEGIN] - upstream sync workflow (jotego/jtcores → master)
+# Pulls the last *released* jotego SHA into our master, not upstream/master
+# HEAD. The released SHA is read from jotego/jtbin commit messages
+# ("release for https://github.com/jotego/jtcores/commit/<sha>"), which is
+# the only reliable signal — jtcores tags are abandoned (latest v1.7.3 is
+# from Jan 2024) and GitHub releases are empty. This avoids dragging in
+# upstream WIP / broken commits (cps15, cps1, …) that periodically break
+# the build. Merge uses the whitespace-ignoring strategy from
+# Forks_MiSTer/fork_ci_template/.github/sync_release.sh. On a clean merge
+# we push master and the next nightly compile-mister-db9 run picks up the
+# new HEAD; on conflict we abort and surface a workflow failure for the
+# maintainer to rebase by hand. Never force-pushes.
+# [MiSTer-DB9 END]
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-jotego-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure git identity
+        run: |
+          git config user.email "ci@mister-db9.local"
+          git config user.name "MiSTer-DB9 CI"
+
+      - name: Fetch jotego upstream
+        run: |
+          git remote add upstream https://github.com/jotego/jtcores.git
+          # Fetch master so the released SHA (which lives on master history)
+          # resolves locally — `git fetch <sha>` is unreliable on stock GH.
+          git fetch --no-tags upstream master
+
+      - name: Resolve last released SHA
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          API='https://api.github.com/repos/jotego/jtbin/commits?per_page=20'
+          # Walk recent jtbin commits — most recent is usually a release commit
+          # ("release for https://github.com/jotego/jtcores/commit/<sha>") but
+          # some are housekeeping (e.g. "NGP cores restored to 7th Nov
+          # version"), so take the first match, not strictly HEAD.
+          RELEASED_SHA=$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              "$API" \
+            | jq -r '.[].commit.message' \
+            | grep -oE 'jtcores/commit/[0-9a-f]{40}' \
+            | head -1 \
+            | cut -d/ -f3
+          )
+          if [[ -z "${RELEASED_SHA:-}" ]]; then
+            echo "::error::no 'release for ...jtcores/commit/<sha>' found in last 20 jtbin commits"
+            exit 1
+          fi
+          if ! git cat-file -e "${RELEASED_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::released SHA ${RELEASED_SHA} not reachable in fetched upstream/master"
+            exit 1
+          fi
+          echo "released_sha=${RELEASED_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Last released jotego SHA per jtbin: ${RELEASED_SHA}"
+
+      - name: Detect new commits
+        id: detect
+        run: |
+          RSHA='${{ steps.release.outputs.released_sha }}'
+          if git merge-base --is-ancestor "$RSHA" HEAD; then
+            echo "behind=0" >> "$GITHUB_OUTPUT"
+            echo "Fork master already includes released SHA ${RSHA}"
+          else
+            BEHIND=$(git rev-list --count "master..${RSHA}")
+            echo "behind=${BEHIND}" >> "$GITHUB_OUTPUT"
+            echo "Master is ${BEHIND} behind released SHA ${RSHA}"
+          fi
+
+      - name: Merge upstream
+        if: steps.detect.outputs.behind != '0'
+        run: |
+          RSHA='${{ steps.release.outputs.released_sha }}'
+          # Mirror the per-core fork strategy: ignore whitespace-only diffs to
+          # tolerate jotego's occasional reformatting churn. Anything else is
+          # a real conflict and bails to manual review.
+          if git merge -Xignore-all-space --no-edit \
+               -m "Merge jotego release ${RSHA} (per jtbin)" "$RSHA"; then
+            echo "Merge text-clean; running guards before push."
+          else
+            echo "::error::Upstream merge conflict — manual rebase required"
+            git merge --abort || true
+            exit 1
+          fi
+
+      # [MiSTer-DB9-Pro BEGIN] - post-merge guards: marker balance + key-gate regression
+      - name: Marker + key-gate regression guards
+        if: steps.detect.outputs.behind != '0'
+        run: |
+          fail=0
+          MISTER=modules/jtframe/target/mister/hdl
+          # Marker balance: -ho counts occurrences (not lines), so multi-marker
+          # one-liners are accounted correctly.
+          for tag in "MiSTer-DB9" "MiSTer-DB9-Pro"; do
+            B=$(grep -rho "\[$tag BEGIN\]" modules/jtframe .github 2>/dev/null | wc -l)
+            E=$(grep -rho "\[$tag END\]"   modules/jtframe .github 2>/dev/null | wc -l)
+            if [[ "$B" != "$E" ]]; then
+              echo "::error::$tag markers unbalanced (BEGIN=$B END=$E)"
+              fail=1
+            fi
+          done
+          # saturn_unlocked must NOT be tied back to 0. Pinned paths (only three
+          # files reference it). Catches wire/assign/reg with 1'b0/1'd0/0; skips
+          # // comment lines (joydb.sv:23 documents the legacy tie-off pattern).
+          if grep -nE "saturn_unlocked\s*=\s*(1'[bdh]0|0)\b" \
+               "$MISTER/sys/hps_io.sv" "$MISTER/jtframe_mister.sv" "$MISTER/joydb.sv" 2>/dev/null \
+             | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//'; then
+            echo "::error::saturn_unlocked stub regression — Phase 2 wiring lost"
+            fail=1
+          fi
+          # Key gate cmd hook must reach uio_block.cmd in hps_io
+          if ! grep -q "uio_block\.cmd == 16'hFE" "$MISTER/sys/hps_io.sv"; then
+            echo "::error::db9_key_gate cmd hook missing/renamed in hps_io.sv"
+            fail=1
+          fi
+          # joydb.sv must AND-gate Saturn arms with saturn_unlocked (order-agnostic, & or &&)
+          if ! grep -qE "(saturn_unlocked\s*&{1,2}\s*joy_saturn_en|joy_saturn_en\s*&{1,2}\s*saturn_unlocked)" \
+                "$MISTER/joydb.sv"; then
+            echo "::error::joydb.sv saturn AND-gate missing"
+            fail=1
+          fi
+          # sys.qip must register all three key-gate files (single read)
+          n=$(grep -cE "siphash24\.v|db9_key_gate\.sv|db9_key_secret\.vh" "$MISTER/sys/sys.qip")
+          if [[ "$n" -lt 3 ]]; then
+            echo "::error::sys.qip missing one or more key-gate file references (found $n/3)"
+            fail=1
+          fi
+          [[ $fail -eq 0 ]] || exit 1
+
+      - name: Push merged master
+        if: steps.detect.outputs.behind != '0'
+        run: |
+          git push origin master
+      # [MiSTer-DB9-Pro END]
+
+      - name: Nothing to do
+        if: steps.detect.outputs.behind == '0'
+        run: echo "Already up to date with last released jotego SHA (${{ steps.release.outputs.released_sha }})."
