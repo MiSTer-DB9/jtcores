@@ -79,6 +79,7 @@ wire [{{ sub (byte_en_width .Data_width) 1 }}:0] {{.Name}}_dsn;
 wire        prom_we, header;
 wire [SDRAMW-2:0] raw_addr, post_addr;
 wire [SDRAMW-2:0] ioctl_prog_addr   = ioctl_addr[SDRAMW-2:0];
+wire [SDRAMW-2:0] sdram_offset_zero = {(SDRAMW-1){1'b0}};
 wire [25:0] pre_addr, dwnld_addr, ioctl_addr_noheader;
 wire [ 7:0] post_data;
 wire [15:0] raw_data;
@@ -460,7 +461,7 @@ jtframe_{{.MemType}}_{{len .Buses}}slot{{with lt 1 (len .Buses)}}s{{end}} #(
     .slot{{$index2}}_wen   ( {{.Name}}_we    ),
     .slot{{$index2}}_din   ( {{if .Din}}{{.Din}}{{else}}{{.Name}}_din{{end}}   ),
     .slot{{$index2}}_wrmask( {{if .Dsn}}{{.Dsn}}{{else}}{{.Name}}_dsn{{end}}   ),
-    .slot{{$index2}}_offset( {{if .Offset }}{{.Offset}}[SDRAMW-2:0]{{else}}{(SDRAMW-1){1'b0}}{{end}} ),
+    .slot{{$index2}}_offset( {{if .Offset }}{{.Offset}}[SDRAMW-2:0]{{else}}sdram_offset_zero{{end}} ),
     {{- else }}
     {{- if not $is_rom }}
     .slot{{$index2}}_clr   ( 1'b0       ), // only 1'b0 supported in mem.yaml
