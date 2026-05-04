@@ -2,8 +2,6 @@ name: MiSTer,Pocket & SiDi
 
 on:
   workflow_dispatch:
-  repository_dispatch:
-    types: rebuild
 jobs:
   list_cores:
     runs-on: ubuntu-latest

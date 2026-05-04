@@ -34,9 +34,11 @@ module jtframe_mister #(parameter
     output [ 1:0]   buttons,
     // LED
     // Extension port (fake USB3)
-    input      [6:0] USER_IN,
-    output reg [6:0] USER_OUT,
-    output          db15_en,
+    // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_IN/USER_OUT widened to 8 pins, USER_PP per-pin push-pull mask
+    input      [7:0] USER_IN,
+    output reg [7:0] USER_OUT,
+    output     [7:0] USER_PP,
+    // [MiSTer-DB9 END]
     output          uart_en,
     input           game_tx,
     output          game_rx,
@@ -254,7 +256,18 @@ wire        ddrld_rd, ddrld_busy;
 
 // UART
 wire        uart_rx, uart_tx;
-wire [6:0]  joy_in, joy_out;
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joy_in/joy_out widened to 8 pins
+wire [7:0]  joy_in, joy_out;
+wire [7:0]  joy_user_pp;
+wire [15:0] joy_raw;
+// [MiSTer-DB9 END]
+// [MiSTer-DB9-Pro BEGIN] - Saturn key gate v1.5 (driven by hps_io UIO_DB9_KEY 0xFE bytestream)
+wire        saturn_unlocked;
+// [MiSTer-DB9-Pro END]
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: full 128b hps_io status (upper 64b carry UserIO Joystick selector)
+wire [127:0] status_full;
+assign status = status_full[63:0];
+// [MiSTer-DB9 END]
 
 // Vertical crop
 wire [12:0] raw_arx, raw_ary;
@@ -283,15 +296,18 @@ assign {FB_PAL_CLK, FB_FORCE_BLANK, FB_PAL_ADDR, FB_PAL_DOUT, FB_PAL_WR} = '0;
 // If JTFRAME_UART is not defined, the core side is disabled
 // If JTFRAME_CHEAT is not defined, the cheat side is disabled
 // Otherwise, both can listen and talk
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_OUT mux switched from db15_en to joy_any_en (joymux drives all DB modes)
 always @(posedge clk_sys) begin
-    USER_OUT <= db15_en ? joy_out :
-        uart_en ? {~6'h0, uart_tx&game_tx } :
-        7'h7f;
+    USER_OUT <= joy_any_en ? joy_out :
+        uart_en ? {~7'h0, uart_tx&game_tx } :
+        8'hff;
 end
 
 assign uart_rx  = uart_en ? USER_IN[1] : 1'b1;
 assign game_rx  = uart_rx;
 assign joy_in   = USER_IN;
+assign USER_PP  = uart_en ? 8'b00000001 : joy_user_pp;
+// [MiSTer-DB9 END]
 
 // Mouse
 assign mouse_st = ps2_mouse[24]^ps2_mouse_l;
@@ -431,28 +447,44 @@ wire [15:0] joyusb_1, joyusb_2;
 
 
 `ifndef JTFRAME_NO_DB15
-assign db15_en  = status[37];
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: status_full[127:126] = joy_type, status_full[125] = joy_2p
+//   joy_type: 2'd0 Off, 2'd1 Saturn, 2'd2 DB9MD, 2'd3 DB15
+//   status_full is the full 128-bit hps_io status; module exposes only the lower 64b
+//   to upstream consumers via `status`. Upper 64b are local to jtframe_mister.
+wire [1:0] joy_type     = status_full[127:126];
+wire       joy_2p       = status_full[125];
+wire       joy_any_en   = |joy_type;
+// [MiSTer-DB9 END]
 jtframe_joymux #(.BUTTONS(BUTTONS)) u_joymux(
     .rst        ( rst       ),
     .clk        ( clk_sys   ),
     .show_osd   ( show_osd  ),
 
-    // MiSTer pins
-    .USER_IN    ( joy_in    ),
-    .USER_OUT   ( joy_out   ),
+    // MiSTer pins (8-bit USER_IO)
+    .USER_IN    ( joy_in        ),
+    .USER_OUT   ( joy_out       ),
+    .USER_PP    ( joy_user_pp   ),
 
-    // joystick mux
-    .db15_en    ( db15_en   ),
+    // joystick mux selection
+    .joy_type   ( joy_type      ),
+    .joy_2p     ( joy_2p        ),
+    // [MiSTer-DB9-Pro BEGIN] - Saturn key gate
+    .saturn_unlocked ( saturn_unlocked ),
+    // [MiSTer-DB9-Pro END]
+
     .joyusb_1   ( joyusb_1  ),
     .joyusb_2   ( joyusb_2  ),
     .joymux_1   ( joystick1 ),
-    .joymux_2   ( joystick2 )
+    .joymux_2   ( joystick2 ),
+    .joy_raw    ( joy_raw   )
 );
 `else
-assign db15_en   = 0;
-assign show_osd  = 0;
-assign joystick1 = joyusb_1;
-assign joystick2 = joyusb_2;
+assign show_osd    = 0;
+assign joystick1   = joyusb_1;
+assign joystick2   = joyusb_2;
+assign joy_user_pp = 8'h00;
+assign joy_raw     = 16'h0000;
+wire   joy_any_en  = 1'b0;
 `endif
 
 `ifdef JTFRAME_SHADOW
@@ -482,8 +514,13 @@ hps_io #( .STRLEN(1024), .PS2DIV(32), .WIDE(`JTFRAME_MR_FASTIO) ) u_hps_io
     .clk_sys         ( clk_rom        ),
     .HPS_BUS         ( HPS_BUS        ),
 
+    // [MiSTer-DB9-Pro BEGIN] - Saturn key gate v1.5 output
+    .saturn_unlocked ( saturn_unlocked ),
+    // [MiSTer-DB9-Pro END]
     .buttons         ( buttons        ),
-    .status          ( status         ),
+    // [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: capture full 128b status; expose lower 64b to upstream via `assign status`
+    .status          ( status_full    ),
+    // [MiSTer-DB9 END]
     .status_menumask ( status_menumask),
     .gamma_bus       ( gamma_bus      ),
     .direct_video    ( direct_video   ),
@@ -501,7 +538,9 @@ hps_io #( .STRLEN(1024), .PS2DIV(32), .WIDE(`JTFRAME_MR_FASTIO) ) u_hps_io
     // NVRAM support
     .ioctl_rd        (                ), // no need
 
-    .joy_raw         ( joystick1[5:0] ), // DB15 control
+    // [MiSTer-DB9 BEGIN] - DB9/SNAC8: 16-bit joy_raw from jtframe_joymux (was joystick1[5:0])
+    .joy_raw         ( joy_raw        ),
+    // [MiSTer-DB9 END]
     .joystick_0      ( joyusb_1       ),
     .joystick_1      ( joyusb_2       ),
     .joystick_2      ( joystick3      ),
