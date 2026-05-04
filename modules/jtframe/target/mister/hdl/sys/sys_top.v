@@ -96,7 +96,9 @@ module sys_top
 `endif
 
 	////////// I/O ALT /////////
-	output        SD_SPI_CS,
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8: SD_SPI_CS pin (AE15) reassigned to USER_IO[7]; SD_SPI_CS demoted to internal wire
+	//output        SD_SPI_CS,
+	// [MiSTer-DB9 END]
 	input         SD_SPI_MISO,
 	output        SD_SPI_CLK,
 	output        SD_SPI_MOSI,
@@ -121,7 +123,9 @@ module sys_top
 	output  [7:0] LED,
 
 	///////// USER IO ///////////
-	inout   [6:0] USER_IO
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_IO widened to 8 pins
+	inout   [7:0] USER_IO
+	// [MiSTer-DB9 END]
 );
 
 //////////////////////  Secondary SD  ///////////////////////////////////
@@ -1633,18 +1637,22 @@ audio_out audio_out
 `endif
 
 ////////////////  User I/O (USB 3.0 connector) /////////////////////////
-wire		user_db15_en, user_uart_en;
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: per-pin push-pull via user_pp[7:0]
+wire [7:0] user_pp;
+wire       user_uart_en;
 
-// user_db15_en will force a high voltage on pins 0/1, rather than
-// leaving it as high impedance. Otherwise, the outputs are
-// used as an open drain connection
-assign USER_IO[0] = (user_db15_en|user_uart_en) ? user_out[0] : !user_out[0]  ? 1'b0 : 1'bZ;
-assign USER_IO[1] = user_db15_en ? user_out[1] : !user_out[1]  ? 1'b0 : 1'bZ;
-assign USER_IO[2] = !(SW[1] ? HDMI_I2S   : user_out[2]) ? 1'b0 : 1'bZ;
-assign USER_IO[3] =                       !user_out[3]  ? 1'b0 : 1'bZ;
-assign USER_IO[4] = !(SW[1] ? HDMI_SCLK  : user_out[4]) ? 1'b0 : 1'bZ;
-assign USER_IO[5] = !(SW[1] ? HDMI_LRCLK : user_out[5]) ? 1'b0 : 1'bZ;
-assign USER_IO[6] =                       !user_out[6]  ? 1'b0 : 1'bZ;
+// user_pp[N]=1 forces push-pull (drive both 0 and 1) on USER_IO[N], rather
+// than leaving 1 as high impedance. Used by DB15 (pins 0,1), DB9MD (pins 0,4),
+// Saturn (pins 2,4,6), and UART (pin 0). user_pp[N]=0 keeps the upstream
+// open-drain semantics + HDMI fallback for SW[1] (VGA-mode bridge).
+assign USER_IO[0] = user_pp[0] ?  user_out[0]                       : !user_out[0]  ? 1'b0 : 1'bZ;
+assign USER_IO[1] = user_pp[1] ?  user_out[1]                       : !user_out[1]  ? 1'b0 : 1'bZ;
+assign USER_IO[2] = user_pp[2] ?  user_out[2]                       : !(SW[1] ? HDMI_I2S   : user_out[2]) ? 1'b0 : 1'bZ;
+assign USER_IO[3] = user_pp[3] ?  user_out[3]                       : !user_out[3]  ? 1'b0 : 1'bZ;
+assign USER_IO[4] = user_pp[4] ?  user_out[4]                       : !(SW[1] ? HDMI_SCLK  : user_out[4]) ? 1'b0 : 1'bZ;
+assign USER_IO[5] = user_pp[5] ?  user_out[5]                       : !(SW[1] ? HDMI_LRCLK : user_out[5]) ? 1'b0 : 1'bZ;
+assign USER_IO[6] = user_pp[6] ?  user_out[6]                       : !user_out[6]  ? 1'b0 : 1'bZ;
+assign USER_IO[7] = user_pp[7] ?  user_out[7]                       : !user_out[7]  ? 1'b0 : 1'bZ;
 
 assign user_in[0] =         USER_IO[0];
 assign user_in[1] =         USER_IO[1];
@@ -1653,6 +1661,8 @@ assign user_in[3] =         USER_IO[3];
 assign user_in[4] = SW[1] | USER_IO[4];
 assign user_in[5] = SW[1] | USER_IO[5];
 assign user_in[6] =         USER_IO[6];
+assign user_in[7] =         USER_IO[7];
+// [MiSTer-DB9 END]
 
 
 ///////////////////  User module connection ////////////////////////////
@@ -1687,7 +1697,9 @@ wire  [1:0] btn;
 sync_fix sync_v(clk_vid, vs_emu, vs_fix);
 sync_fix sync_h(clk_vid, hs_emu, hs_fix);
 
-wire  [6:0] user_out, user_in;
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: user_out/user_in widened to 8 pins
+wire  [7:0] user_out, user_in;
+// [MiSTer-DB9 END]
 
 assign clk_ihdmi= clk_vid;
 assign ce_hpix  = vga_ce_sl;
@@ -1858,7 +1870,9 @@ emu emu
 
 	.USER_OUT( user_out  	) ,
 	.USER_IN ( user_in   	),
-	.db15_en ( user_db15_en	),
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_PP per-pin push-pull mask
+	.USER_PP ( user_pp     ),
+	// [MiSTer-DB9 END]
 	.uart_en ( user_uart_en ),
 	.gun_border_en(gun_border_en),
 	.show_osd( show_osd		)
