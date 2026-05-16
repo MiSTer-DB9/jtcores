@@ -30,7 +30,7 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: master
           fetch-depth: 0
@@ -104,10 +104,56 @@ jobs:
                -m "Merge jotego release ${RSHA} (per jtbin)" "$RSHA"; then
             echo "Merge text-clean; running guards before push."
           else
-            echo "::error::Upstream merge conflict — manual rebase required"
-            git merge --abort || true
-            exit 1
+            # Auto-resolve the common case: jotego edited one of its own
+            # workflow files that this fork deleted (delete/modify). If EVERY
+            # unmerged path is a non-fork file under .github/workflows/, drop
+            # them and finish the merge. Any other conflict (or a conflict on
+            # a fork-owned workflow) is real -> abort to manual review.
+            conflicts=$(git ls-files -u | awk '{print $4}' | sort -u)
+            other=$(printf '%s\n' "$conflicts" \
+                      | grep -v '^[.]github/workflows/' || true)
+            own=$(printf '%s\n' "$conflicts" \
+                    | grep -E '^[.]github/workflows/(compile-mister-db9|sync-jotego-upstream)[.]ya?ml$' || true)
+            if [[ -n "$conflicts" && -z "$other" && -z "$own" ]]; then
+              printf '%s\n' "$conflicts" \
+                | while read -r f; do git rm -q -f --ignore-unmatch "$f"; done
+              git commit --no-edit
+              echo "Resolved workflow-only conflicts by dropping upstream workflows."
+            else
+              echo "::error::Upstream merge conflict — manual rebase required"
+              git merge --abort || true
+              exit 1
+            fi
           fi
+
+      # [MiSTer-DB9 BEGIN] - keep only fork-owned workflows after every sync
+      - name: Strip upstream jotego workflows
+        if: steps.detect.outputs.behind != '0'
+        run: |
+          # Upstream merges reintroduce jotego's workflows (compile-all,
+          # framework, linter, …) which always fail here (private submodules
+          # / jotego-only infra). Keep only the fork's own workflows; the
+          # rest are removed on every sync so the Actions tab stays clean.
+          # .github/dependabot.yml is outside workflows/ and untouched.
+          keep=( compile-mister-db9.yaml sync-jotego-upstream.yaml )
+          removed=0
+          for f in .github/workflows/*; do
+            [ -e "$f" ] || continue
+            b=$(basename "$f")
+            skip=0
+            for k in "${keep[@]}"; do [ "$b" = "$k" ] && skip=1; done
+            [ "$skip" = 1 ] && continue
+            git rm -q -f "$f"
+            removed=1
+          done
+          if [ "$removed" = 1 ]; then
+            git commit --no-edit \
+              -m "Strip upstream jotego workflows (DB9 fork runs only its own)"
+            echo "Removed reintroduced upstream workflow files."
+          else
+            echo "No extra workflow files to strip."
+          fi
+      # [MiSTer-DB9 END]
 
       # [MiSTer-DB9-Pro BEGIN] - post-merge guards: marker balance + key-gate regression
       - name: Marker + key-gate regression guards
