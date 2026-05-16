@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned actions in the fork's own workflows current
+  # (compile-mister-db9.yaml, sync-jotego-upstream.yaml). Upstream jotego
+  # workflows are stripped on every sync, so only these are ever present.
+  # Default branch is master -> no target-branch override needed.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
