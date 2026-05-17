@@ -285,9 +285,12 @@ wire [15:0] joy_raw;
 wire        saturn_unlocked;
 // [MiSTer-DB9-Pro END]
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: full 128b hps_io status. The
-// UserIO Joystick selector lives in jtframe's OSD-reserved `o` group
-// (status[37:36] / status[63]), not the top word, so it stays loaded on
-// CPS1 cores with long MRA DIP config strings (see cfgstr note).
+// UserIO Joystick selector lives at status[62:61] / status[63]: stable
+// lower-64 word, but ABOVE the MRA DIP range. MiSTer firmware lays MRA
+// DIP switches into status starting at JTFRAME_DIPBASE (16 on CPS1),
+// spanning up to ~status[40]; the earlier status[37:36] placement fell
+// inside that window, so CPS1 DIP defaults drove joy_type non-zero and
+// activated the joydb floating-pin path (see cfgstr note).
 wire [127:0] status_full;
 assign status = status_full[63:0];
 // [MiSTer-DB9 END]
@@ -476,13 +479,16 @@ wire [15:0] joyusb_1, joyusb_2;
 
 
 `ifndef JTFRAME_NO_DB15
-// [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: status_full[37:36] = joy_type, status_full[63] = joy_2p
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: status_full[62:61] = joy_type, status_full[63] = joy_2p
 //   joy_type: 2'd0 Off, 2'd1 Saturn, 2'd2 DB9MD, 2'd3 DB15
-//   Bits sit in jtframe's OSD-reserved `o` group (status[63:32]), where the
-//   upstream DB15-only selector also lived (o5). Moved off the top status
-//   word (127:112) because CPS1 cores with long MRA DIP config strings did
-//   not keep those bits stable, dropping DB15 mid-game.
-wire [1:0] joy_type     = status_full[37:36];
+//   Bits sit just below the top of the stable lower-64 status word and
+//   ABOVE the MRA DIP range. MiSTer firmware places MRA DIP switches into
+//   status from JTFRAME_DIPBASE up (16 on CPS1, spanning to ~status[40]);
+//   the earlier status[37:36] placement fell inside CPS1's DIP window, so
+//   the game's DIP defaults drove joy_type non-zero, activating the joydb
+//   floating-pin path and corrupting CPS1 (Strider, Street Fighter II).
+//   Top word (127:112) is unusable: not held stable on long-cfgstr cores.
+wire [1:0] joy_type     = status_full[62:61];
 wire       joy_2p       = status_full[63];
 wire       joy_any_en   = |joy_type;
 // [MiSTer-DB9 END]

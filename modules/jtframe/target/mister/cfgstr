@@ -39,17 +39,22 @@ d5P1oAD,Crop Offset,0,2,4,8,10,12,-12,-10,-8,-6,-4,-2;
 {{ if .JTFRAME_OSD_VOL }}           O67,FX volume,high,highest,lowest,low; {{ end }}
 {{ if .JTFRAME_OSD_TEST }}          OA,Service mode,Off,On; {{ end }}
 {{ if .JTFRAME_DIAL }}              o03,Sensitivity,high,highest,lowest,low;{{end}}
-{{- /* [MiSTer-DB9-Pro BEGIN] - DB9MD/DB15/Saturn selector (status[37:36], status[63]).
+{{- /* [MiSTer-DB9-Pro BEGIN] - DB9MD/DB15/Saturn selector (status[62:61], status[63]).
        Saturn first to avoid OSD-cycle ghost inputs (DB9MD reads Saturn data lines as garbage).
        UART (status[38]=o6) remains independent.
-       Bits live in jtframe's OSD-reserved `o` group (status[63:32]), like the
-       upstream DB15-only selector did (o5). Kept out of the top status word
-       (127:112): CPS1 cores with long MRA DIP config strings did not hold the
-       high bits stable, so DB15 dropped out mid-game. 36/37/63 are unused by
-       any jtcores cfgstr/CORE_OSD option and outside the MRA DIP range. */ -}}
+       Bits sit at the very top of the stable lower-64 status word, ABOVE the
+       MRA DIP range. MiSTer firmware lays MRA DIP switches into status from
+       JTFRAME_DIPBASE up; jtframe caps DIP at 32 bits, so the worst case is
+       max DIPBASE (24, outrun) + 31 = status[55]. jtframe video/CRT options
+       top out at status[60]. So 61/62/63 are free fork-wide and unused by any
+       core CORE_OSD/MISTER_EXTRA. The earlier status[37:36] placement fell
+       inside CPS1's DIPBASE=16 window (status[16..]); CPS1 DIP defaults drove
+       joy_type non-zero, activating the joydb floating-pin path and corrupting
+       CPS1 (Strider, Street Fighter II). Top word (127:112) is unusable: not
+       held stable on long-cfgstr cores (DB15 dropped mid-game). */ -}}
 {{ if .JTFRAME_UART }}              o6,UART,Off,On; {{ end }}
 {{ if .JTFRAME_NO_DB15 }} {{ else }}
-                                    O[37:36],UserIO Joystick,Off,Saturn,DB9MD,DB15;
+                                    O[62:61],UserIO Joystick,Off,Saturn,DB9MD,DB15;
                                     O[63],UserIO Players,1P,2P;
 {{ end }}
 {{- /* [MiSTer-DB9-Pro END] */ -}}
