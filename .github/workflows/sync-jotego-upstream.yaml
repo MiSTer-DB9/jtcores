@@ -8,10 +8,15 @@ name: Sync jotego upstream
 # from Jan 2024) and GitHub releases are empty. This avoids dragging in
 # upstream WIP / broken commits (cps15, cps1, …) that periodically break
 # the build. Merge uses the whitespace-ignoring strategy from
-# Forks_MiSTer/fork_ci_template/.github/sync_release.sh. On a clean merge
-# we push master and the next nightly compile-mister-db9 run picks up the
-# new HEAD; on conflict we abort and surface a workflow failure for the
-# maintainer to rebase by hand. Never force-pushes.
+# Forks_MiSTer/fork_ci_template/.github/sync_release.sh, with rerere
+# trained from this fork's prior merge commits so recurring conflicts
+# (e.g. the DB9 wrap in jtframe_mister.sv) auto-replay. Jotego's own
+# workflows are kept in-tree (so their merges stay clean) but disabled via
+# the Actions API every run, never git-deleted — committing the deletion
+# turned every jotego edit to those files into a delete/modify conflict.
+# On a clean/auto-resolved merge we push master and the next nightly
+# compile-mister-db9 run picks up the new HEAD; on a genuine, never-seen
+# conflict we abort for a one-time manual rebase. Never force-pushes.
 # [MiSTer-DB9 END]
 
 on:
@@ -21,6 +26,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # gh workflow disable (Disable upstream jotego workflows)
 
 concurrency:
   group: sync-jotego-upstream
@@ -40,6 +46,11 @@ jobs:
         run: |
           git config user.email "ci@mister-db9.local"
           git config user.name "MiSTer-DB9 CI"
+          # rerere: learn/replay conflict resolutions. autoupdate stages a
+          # cached resolution automatically (the merge still stops for the
+          # commit, handled in "Merge upstream").
+          git config rerere.enabled true
+          git config rerere.autoupdate true
 
       - name: Fetch jotego upstream
         run: |
@@ -93,67 +104,74 @@ jobs:
             echo "Master is ${BEHIND} behind released SHA ${RSHA}"
           fi
 
+      # [MiSTer-DB9 BEGIN] - rerere training (mirrors Forks_MiSTer rerere_train.sh)
+      - name: Train rerere from merge history
+        if: steps.detect.outputs.behind != '0'
+        run: |
+          # The rr-cache is not persisted across CI checkouts, so rebuild it
+          # every run by replaying this fork's prior merge commits. Once a
+          # genuine conflict is resolved by hand on master, rerere learns it
+          # here and auto-resolves the same conflict on every later sync —
+          # the same mechanism the per-core forks use in sync_release.sh.
+          ORIGINAL_BRANCH=$(git symbolic-ref -q HEAD) ||
+          ORIGINAL_HEAD=$(git rev-parse --verify HEAD) || {
+            echo >&2 "rerere-train: Not on any branch and no commit yet?"
+            exit 1
+          }
+          mkdir -p ".git/rr-cache" || true
+          git rev-list --parents HEAD |
+          while read -r commit parent1 other_parents; do
+            if test -z "${other_parents}"; then
+              continue   # skip non-merges
+            fi
+            git checkout -q "${parent1}^0"
+            # word-split intended: a merge commit can have >1 other parent
+            # shellcheck disable=SC2086
+            if git merge ${other_parents} >/dev/null 2>&1; then
+              continue   # cleanly merges, nothing to learn
+            fi
+            if test -s ".git/MERGE_RR"; then
+              git show -s --pretty=format:"Learning from %h %s%n" "${commit}"
+              git rerere
+              git checkout -q "${commit}" -- .
+              git rerere
+            fi
+            git reset -q --hard
+          done
+          if test -z "${ORIGINAL_BRANCH:-}"; then
+            git checkout -q "${ORIGINAL_HEAD}"
+          else
+            git checkout -q "${ORIGINAL_BRANCH#refs/heads/}"
+          fi
+      # [MiSTer-DB9 END]
+
       - name: Merge upstream
         if: steps.detect.outputs.behind != '0'
         run: |
           RSHA='${{ steps.release.outputs.released_sha }}'
           # Mirror the per-core fork strategy: ignore whitespace-only diffs to
-          # tolerate jotego's occasional reformatting churn. Anything else is
-          # a real conflict and bails to manual review.
+          # tolerate jotego's occasional reformatting churn.
           if git merge -Xignore-all-space --no-edit \
                -m "Merge jotego release ${RSHA} (per jtbin)" "$RSHA"; then
-            echo "Merge text-clean; running guards before push."
+            echo "Merge text-clean; continuing."
           else
-            # Auto-resolve the common case: jotego edited one of its own
-            # workflow files that this fork deleted (delete/modify). If EVERY
-            # unmerged path is a non-fork file under .github/workflows/, drop
-            # them and finish the merge. Any other conflict (or a conflict on
-            # a fork-owned workflow) is real -> abort to manual review.
-            conflicts=$(git ls-files -u | awk '{print $4}' | sort -u)
-            other=$(printf '%s\n' "$conflicts" \
-                      | grep -v '^[.]github/workflows/' || true)
-            own=$(printf '%s\n' "$conflicts" \
-                    | grep -E '^[.]github/workflows/(compile-mister-db9|sync-jotego-upstream)[.]ya?ml$' || true)
-            if [[ -n "$conflicts" && -z "$other" && -z "$own" ]]; then
-              printf '%s\n' "$conflicts" \
-                | while read -r f; do git rm -q -f --ignore-unmatch "$f"; done
+            # rerere.autoupdate stages resolutions it has been trained on but
+            # does not commit the merge. If no unmerged paths remain, every
+            # conflict was auto-resolved from the trained cache -> finalize.
+            # Otherwise a genuine, never-resolved conflict needs a human once
+            # (after which the resolving merge commit on master trains rerere
+            # and the next sync auto-resolves it). Upstream workflow files are
+            # no longer deleted, so there is no delete/modify conflict class.
+            if [ -z "$(git ls-files -u)" ]; then
               git commit --no-edit
-              echo "Resolved workflow-only conflicts by dropping upstream workflows."
+              echo "rerere auto-resolved all conflicts; merge finalized."
             else
               echo "::error::Upstream merge conflict — manual rebase required"
+              git ls-files -u | awk '{print $4}' | sort -u | sed 's/^/  conflict: /'
               git merge --abort || true
               exit 1
             fi
           fi
-
-      # [MiSTer-DB9 BEGIN] - keep only fork-owned workflows after every sync
-      - name: Strip upstream jotego workflows
-        if: steps.detect.outputs.behind != '0'
-        run: |
-          # Upstream merges reintroduce jotego's workflows (compile-all,
-          # framework, linter, …) which always fail here (private submodules
-          # / jotego-only infra). Keep only the fork's own workflows; the
-          # rest are removed on every sync so the Actions tab stays clean.
-          # .github/dependabot.yml is outside workflows/ and untouched.
-          keep=( compile-mister-db9.yaml sync-jotego-upstream.yaml )
-          removed=0
-          for f in .github/workflows/*; do
-            [ -e "$f" ] || continue
-            b=$(basename "$f")
-            skip=0
-            for k in "${keep[@]}"; do [ "$b" = "$k" ] && skip=1; done
-            [ "$skip" = 1 ] && continue
-            git rm -q -f "$f"
-            removed=1
-          done
-          if [ "$removed" = 1 ]; then
-            git commit --no-edit \
-              -m "Strip upstream jotego workflows (DB9 fork runs only its own)"
-            echo "Removed reintroduced upstream workflow files."
-          else
-            echo "No extra workflow files to strip."
-          fi
-      # [MiSTer-DB9 END]
 
       # [MiSTer-DB9-Pro BEGIN] - post-merge guards: marker balance + key-gate regression
       - name: Marker + key-gate regression guards
@@ -204,6 +222,40 @@ jobs:
         run: |
           git push origin master
       # [MiSTer-DB9-Pro END]
+
+      # [MiSTer-DB9 BEGIN] - disable (don't delete) upstream jotego workflows
+      - name: Disable upstream jotego workflows
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Jotego's workflow files stay in-tree so upstream merges of those
+          # paths are ordinary clean 3-way merges (no delete/modify conflict
+          # class). They must never *run* here (private submodules /
+          # jotego-only infra), so disable every workflow except the two
+          # fork-owned ones, every run (incl. on merge abort), so anything
+          # jotego newly adds is disabled on the next tick. Idempotent.
+          keep_re='^(compile-mister-db9|sync-jotego-upstream)\.ya?ml$'
+          gh workflow list --all --repo "$GITHUB_REPOSITORY" \
+              --json name,path,state,id \
+            | jq -c '.[]' \
+            | while read -r wf; do
+                path=$(jq -r '.path'  <<<"$wf")
+                state=$(jq -r '.state' <<<"$wf")
+                id=$(jq -r '.id'    <<<"$wf")
+                name=$(jq -r '.name'  <<<"$wf")
+                base=${path##*/}
+                if [[ "$base" =~ $keep_re ]]; then
+                  continue
+                fi
+                if [[ "$state" == "active" ]]; then
+                  echo "Disabling: $name ($base)"
+                  gh workflow disable "$id" --repo "$GITHUB_REPOSITORY" || true
+                else
+                  echo "Already $state: $name ($base)"
+                fi
+              done
+      # [MiSTer-DB9 END]
 
       - name: Nothing to do
         if: steps.detect.outputs.behind == '0'
