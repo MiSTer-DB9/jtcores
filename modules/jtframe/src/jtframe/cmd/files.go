@@ -1,4 +1,4 @@
-/*  This file is part of JT_FRAME.
+/*  This file is part of JTFRAME.
     JTFRAME program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -18,18 +18,17 @@
 package cmd
 
 import (
-	jtfiles "jotego/jtframe/files"
 	"github.com/spf13/cobra"
-	"jotego/jtframe/common"
+	jtfiles "jotego/jtframe/files"
 )
 
 // filesCmd represents the files command
 var filesCmd = &cobra.Command{
 	Use:   "files <sim|syn|plain> <core-name>",
 	Short: "Generates the project compilation and simulation files",
-	Long: common.Doc2string("jtframe-files.md"),
-	Run:  run_files,
-	Args: cobra.ExactArgs(2),
+	Long:  man_blurb("jtframe-files", "Generate project file lists for simulation, synthesis, or plain output."),
+	Run:   run_files,
+	Args:  cobra.ExactArgs(2),
 }
 
 var files_args jtfiles.Args

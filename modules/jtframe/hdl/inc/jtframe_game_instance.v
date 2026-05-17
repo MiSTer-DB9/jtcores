@@ -26,6 +26,10 @@ wire [15:0]  sram_din, sram_dout;
 wire [ 1:0]  sram_dsn;
 wire         sram_wen, sram_ok;
 
+wire [15:0]  sav_din, sav_dout, sav_addr;
+wire         sav_change, sav_wait, sav_done, sav_ack;
+wire [ 1:0]  sav_wr;
+
 `ifdef SIMULATION
 assign sim_hb         = ~LHBL;
 assign sim_vb         = ~LVBL;
@@ -114,6 +118,7 @@ u_game(
     .ln_data      ( ln_data          ),
     .ln_done      ( ln_done          ),
     .ln_hs        ( ln_hs            ),
+    .ln_dout      ( ln_dout          ),
     .ln_pxl       ( ln_pxl           ),
     .ln_v         ( ln_v             ),
     .ln_vs        ( ln_vs            ),
@@ -125,12 +130,24 @@ u_game(
     .ba1_addr   ( ba1_addr      ),
     .ba2_addr   ( ba2_addr      ),
     .ba3_addr   ( ba3_addr      ),
+`ifdef JTFRAME_SDRAM_CACHE
+    .burst_addr ( burst_addr    ),
+    .burst_ba   ( burst_ba      ),
+    .burst_rd   ( burst_rd      ),
+    .burst_wr   ( burst_wr      ),
+`endif
     .ba_rd      ( ba_rd         ),
     .ba_wr      ( ba_wr         ),
     .ba_dst     ( ba_dst        ),
     .ba_dok     ( ba_dok        ),
     .ba_rdy     ( ba_rdy        ),
     .ba_ack     ( ba_ack        ),
+`ifdef JTFRAME_SDRAM_CACHE
+    .burst_dst  ( burst_dst     ),
+    .burst_dok  ( burst_dok     ),
+    .burst_rdy  ( burst_rdy     ),
+    .burst_ack  ( burst_ack     ),
+`endif
     .ba0_din    ( ba0_din       ),
     .ba0_dsn    ( ba0_dsn       ),
     .ba1_din    ( ba1_din       ),
@@ -139,6 +156,9 @@ u_game(
     .ba2_dsn    ( ba2_dsn       ),
     .ba3_din    ( ba3_din       ),
     .ba3_dsn    ( ba3_dsn       ),
+`ifdef JTFRAME_SDRAM_CACHE
+    .burst_din  ( burst_din     ),
+`endif
 
     .prog_ba    ( prog_ba       ),
     .prog_rdy   ( prog_rdy      ),
@@ -157,6 +177,17 @@ u_game(
     .sram_ok    ( sram_ok       ),
 `endif
 
+`ifdef JTFRAME_SAVEGAME
+    // Save/Load
+    .sav_change ( sav_change    ),
+    .sav_wait   ( sav_wait      ),
+    .sav_done   ( sav_done      ),
+    .sav_wr     ( sav_wr        ),
+    .sav_ack    ( sav_ack       ),
+    .sav_din    ( sav_din       ),
+    .sav_dout   ( sav_dout      ),
+    .sav_addr   ( sav_addr      ),
+`endif
     // common ROM-load interface
     .prog_addr  ( prog_addr     ),
     .prog_rd    ( prog_rd       ),

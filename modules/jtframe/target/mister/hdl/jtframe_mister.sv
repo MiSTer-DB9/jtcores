@@ -43,6 +43,7 @@ module jtframe_mister #(parameter
     input           game_tx,
     output          game_rx,
     output          show_osd,
+    input           OSD_STATUS,
     // Base video
     input [COLORW-1:0] game_r, game_g, game_b,
     input           LHBL,
@@ -80,6 +81,7 @@ module jtframe_mister #(parameter
     input               ln_done,
     input               ln_we,
     output              ln_hs, ln_vs, ln_lvbl,
+    output       [15:0] ln_dout,
     output       [15:0] ln_pxl,
     output       [ 7:0] ln_v,
 
@@ -127,6 +129,15 @@ module jtframe_mister #(parameter
     input               dwnld_busy,
     output              ioctl_rom,
     output              ioctl_cart,
+    // Save/Load
+    input               sav_change,
+    input               sav_wait,
+    input               sav_done,
+    output       [ 1:0] sav_wr,
+    output              sav_ack,
+    input        [15:0] sav_din,
+    output       [15:0] sav_dout,
+    output       [15:0] sav_addr,
 
     input  [SDRAMW-1:0] prog_addr,
     input        [15:0] prog_data,
@@ -140,10 +151,19 @@ module jtframe_mister #(parameter
     output              prog_ack,
     // ROM access from game
     input  [SDRAMW-1:0] ba0_addr, ba1_addr, ba2_addr, ba3_addr,
+`ifdef JTFRAME_SDRAM_CACHE
+    input  [SDRAMW-1:0] burst_addr,
+    input         [1:0] burst_ba,
+    input               burst_rd, burst_wr,
+    output              burst_ack, burst_dst, burst_dok, burst_rdy,
+`endif
     input         [3:0] ba_rd,    ba_wr,
     output        [3:0] ba_ack,   ba_rdy,   ba_dst,   ba_dok,
     input        [15:0] ba0_din,  ba1_din,  ba2_din,  ba3_din,
     input        [ 1:0] ba0_dsn,  ba1_dsn,  ba2_dsn,  ba3_dsn,
+`ifdef JTFRAME_SDRAM_CACHE
+    input        [15:0] burst_din,
+`endif
     output       [15:0] sdram_dout,
 //////////// board
     output          rst,      // synchronous reset
@@ -282,6 +302,10 @@ reg         en216p;
 reg   [4:0] voff;
 reg         pxl1_cen;
 
+// Save/Load
+wire [ 1:0] ram_save;
+wire        ram_load;
+
 wire  [7:0] target_info;
 
 assign game_paddle_3 = paddle_3;
@@ -327,6 +351,8 @@ jtframe_mister_status u_status(
     .hoffset        ( hoffset        ),
     .hsize_enable   ( hsize_enable   ),
     .hsize_scale    ( hsize_scale    ),
+    .ram_save       ( ram_save       ),
+    .ram_load       ( ram_load       ),
     .gun_border_en  ( gun_border_en  ),
     .uart_en        ( uart_en        )
 );
@@ -509,7 +535,9 @@ wire   joy_any_en  = 1'b0;
     assign hps_din = ioctl_din;
 `endif
 
-hps_io #( .STRLEN(1024), .PS2DIV(32), .WIDE(`JTFRAME_MR_FASTIO) ) u_hps_io
+hps_io #(
+    .STRLEN(1024),.PS2DIV(32),.WIDE(`JTFRAME_MR_FASTIO),.BLKSZ(1)
+) u_hps_io
 (
     .clk_sys         ( clk_rom        ),
     .HPS_BUS         ( HPS_BUS        ),
@@ -533,10 +561,24 @@ hps_io #( .STRLEN(1024), .PS2DIV(32), .WIDE(`JTFRAME_MR_FASTIO) ) u_hps_io
     .ioctl_dout      ( hps_dout       ),
     .ioctl_din       ( hps_din        ),
     .ioctl_index     ( hps_index      ),
-    .ioctl_wait      ( hps_wait       ),
+    .ioctl_wait      ( hps_wait     | sd_wait  ),
     .ioctl_upload    ( hps_upload     ),
     // NVRAM support
     .ioctl_rd        (                ), // no need
+    `ifdef JTFRAME_SAVEGAME
+    .sd_lba          ('{sd_lba}       ), // input
+    .sd_rd           ( sd_rd          ), // input
+    .sd_wr           ( sd_wr          ), // input
+    .sd_ack          ( sd_ack         ), // output
+    .sd_buff_addr    ( sd_buff_addr   ), // output
+    .sd_buff_dout    ( sd_buff_dout   ), // output
+    .sd_buff_din     ('{sd_buff_din}  ), // input
+    .sd_buff_wr      ( sd_buff_wr     ), // output
+    .sd_blk_cnt      ('{6'b0}         ), // input
+    .img_mounted     ( img_mounted    ), // output
+    .img_readonly    ( img_readonly   ), // output
+    .img_size        ( img_size       ), // output
+    `endif
 
     // [MiSTer-DB9 BEGIN] - DB9/SNAC8: 16-bit joy_raw from jtframe_joymux (was joystick1[5:0])
     .joy_raw         ( joy_raw        ),
@@ -574,6 +616,48 @@ hps_io #( .STRLEN(1024), .PS2DIV(32), .WIDE(`JTFRAME_MR_FASTIO) ) u_hps_io
     .ps2_mouse_ext   (                ),
     .ioctl_file_ext  (                )
 );
+
+wire        sd_wait;
+`ifdef JTFRAME_SAVEGAME
+wire [31:0] sd_lba;
+reg  [ 7:0] sd_buff_din;
+wire [ 7:0] sd_buff_addr, sd_buff_dout;
+wire        bk_ena, sd_ack, sd_wr, sd_rd, sd_buff_wr;
+wire [63:0] img_size;
+wire        img_mounted, img_readonly;
+
+jtframe_mister_cartsave u_save(
+    .clk         ( clk_sys      ),
+    .OSD_STATUS  ( OSD_STATUS   ),
+    .io_strobe   ( HPS_BUS[33]  ),
+    .img_size    ( img_size     ),
+    .img_mounted ( img_mounted  ),
+    .img_readonly( img_readonly ),
+    .ram_save    ( ram_save     ),
+    .ram_load    ( ram_load     ),
+    .downloading ( ioctl_cart   ),
+    .sd_buff_addr( sd_buff_addr ),
+    .sd_buff_dout( sd_buff_dout ),
+    .sd_buff_din ( sd_buff_din  ),
+    .sd_buff_wr  ( sd_buff_wr   ),
+    .sd_ack      ( sd_ack       ),
+    .sd_rd       ( sd_rd        ),
+    .sd_wr       ( sd_wr        ),
+    .bk_ena      ( bk_ena       ),
+    .sd_lba      ( sd_lba       ),
+    .sd_wait     ( sd_wait      ),
+    .sav_change  ( sav_change   ),
+    .sav_wait    ( sav_wait     ),
+    .sav_done    ( sav_done     ),
+    .sav_din     ( sav_din      ),
+    .sav_dout    ( sav_dout     ),
+    .sav_addr    ( sav_addr     ),
+    .sav_ack     ( sav_ack      ),
+    .sav_wr      ( sav_wr       )
+);
+`else
+assign {sav_addr, sav_dout, sav_wr, sav_ack, sd_wait} = 0;
+`endif
 
 `ifndef DEBUG_NOHDMI
     // scales base video horizontally
@@ -770,6 +854,16 @@ jtframe_board #(
     .ba1_addr   ( ba1_addr      ),
     .ba2_addr   ( ba2_addr      ),
     .ba3_addr   ( ba3_addr      ),
+`ifdef JTFRAME_SDRAM_CACHE
+    .burst_addr ( burst_addr    ),
+    .burst_ba   ( burst_ba      ),
+    .burst_rd   ( burst_rd      ),
+    .burst_wr   ( burst_wr      ),
+    .burst_ack  ( burst_ack     ),
+    .burst_dst  ( burst_dst     ),
+    .burst_dok  ( burst_dok     ),
+    .burst_rdy  ( burst_rdy     ),
+`endif
     .ba_rd      ( ba_rd         ),
     .ba_wr      ( ba_wr         ),
     .ba_dst     ( ba_dst        ),
@@ -784,6 +878,9 @@ jtframe_board #(
     .ba2_dsn    ( ba2_dsn       ),
     .ba3_din    ( ba3_din       ),
     .ba3_dsn    ( ba3_dsn       ),
+`ifdef JTFRAME_SDRAM_CACHE
+    .burst_din  ( burst_din     ),
+`endif
 
     // ROM-load interface
     .prog_addr  ( prog_addr     ),
@@ -939,6 +1036,7 @@ wire rot_clk;
         .ln_data    ( ln_data       ),
         .ln_done    ( ln_done       ),
         .ln_hs      ( ln_hs         ),
+        .ln_dout    ( ln_dout       ),
         .ln_pxl     ( ln_pxl        ),
         .ln_v       ( ln_v          ),
         .ln_vs      ( ln_vs         ),

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -30,8 +31,9 @@ import (
 )
 
 var verbose bool
+var size_re = regexp.MustCompile(`^(\d+)(?:\s*(B|k|kB|M|MB))?$`)
 
-func Run(args []string, v bool) error {
+func Run(args []string, v, apply_sim bool) error {
 	verbose = v
 	var game string
 	if len(args) != 0 {
@@ -51,10 +53,21 @@ func Run(args []string, v bool) error {
 		return err
 	}
 	macros.MakeMacros(core, "mist")
-	if err := extractSDRAM(core, game); err != nil {
+	memCfg, err := parseMemConfig(core)
+	if err != nil {
 		return err
 	}
-	makeSymlink(game)
+	if err := extractSDRAM(memCfg, core, game); err != nil {
+		return err
+	}
+	if apply_sim {
+		if err := applySimFiles(memCfg); err != nil {
+			return err
+		}
+	}
+	if err := makeSymlink(game); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -133,34 +146,31 @@ func readROM(game string) []byte {
 	return rom
 }
 
-func extractSDRAM(core, game string) error {
-	const eightMB = 8 * 1024 * 1024
+func extractSDRAM(memCfg *mem.MemConfig, core, game string) error {
 	rom := readROM(game)
-	memCfg, err := parseMemConfig(core)
-	if err != nil {
-		return err
-	}
+	var err error
 	if memCfg.Download.Pre_addr || memCfg.Download.Post_addr || memCfg.Download.Post_data {
 		return fmt.Errorf("jtutil sdram does not support download address/data transforms (pre_addr/post_addr/post_data) in mem.yaml")
 	}
-	romForOffsets := make([]byte, len(rom))
-	copy(romForOffsets, rom)
-	swapBytes(romForOffsets, 0)
 	mraCfg, err := mra.ParseTomlFile(core)
 	if err != nil {
 		return err
 	}
 	regCnt := len(mraCfg.Header.Offset.Regions)
 	hinfo := mraCfg.Header.Offset
-	offsets, reg := bankOffset(regCnt, hinfo, romForOffsets)
+	offsets, reg, err := bankOffset(regCnt, hinfo, rom)
+	if err != nil {
+		return err
+	}
 	if err = applyGfxSort(memCfg, game, rom, offsets); err != nil {
 		return err
 	}
 	// Swap the bytes so sdram.bin files get written correctly as 16-bit words.
 	swapBytes(rom, 0)
 	header := macros.GetInt("JTFRAME_HEADER")
+	bankFill := sdramBankSize()
 	promStart := offsets[4]
-	nxStart, err := dump("sdram_bank0.bin", rom, header, offsets[1], promStart, eightMB)
+	nxStart, err := dump("sdram_bank0.bin", rom, header, offsets[1], promStart, bankFill)
 	if err != nil {
 		return fmt.Errorf("%w for bank 0", err)
 	}
@@ -170,7 +180,7 @@ func extractSDRAM(core, game string) error {
 		os.Remove("sdram_bank3.bin")
 		return nil
 	}
-	nxStart, err = dump("sdram_bank1.bin", rom, nxStart, offsets[2], promStart, eightMB)
+	nxStart, err = dump("sdram_bank1.bin", rom, nxStart, offsets[2], promStart, bankFill)
 	if err != nil {
 		return fmt.Errorf("%w for bank 1", err)
 	}
@@ -179,7 +189,7 @@ func extractSDRAM(core, game string) error {
 		os.Remove("sdram_bank3.bin")
 		return nil
 	}
-	nxStart, err = dump("sdram_bank2.bin", rom, nxStart, offsets[3], promStart, eightMB)
+	nxStart, err = dump("sdram_bank2.bin", rom, nxStart, offsets[3], promStart, bankFill)
 	if err != nil {
 		return fmt.Errorf("%w for bank 2", err)
 	}
@@ -188,7 +198,7 @@ func extractSDRAM(core, game string) error {
 		fmt.Println("Skippin bank3")
 		return nil
 	}
-	nxStart, err = dump("sdram_bank3.bin", rom, nxStart, 0, promStart, eightMB)
+	nxStart, err = dump("sdram_bank3.bin", rom, nxStart, 0, promStart, bankFill)
 	if err != nil {
 		return fmt.Errorf("%w for bank 3", err)
 	}
@@ -209,7 +219,258 @@ func extractSDRAM(core, game string) error {
 	return nil
 }
 
-func bankOffset(regCnt int, hinfo mra.HeaderOffset, rom []byte) ([]int, []string) {
+type sim_file_entry struct {
+	kind       string
+	name       string
+	path       string
+	bank       int
+	offset     int
+	length     int
+	data_width int
+	big_endian bool
+}
+
+func applySimFiles(cfg *mem.MemConfig) error {
+	all, err := collectSimFiles(cfg)
+	if err != nil {
+		return err
+	}
+	for _, each := range all {
+		if err := applySimFile(each); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func collectSimFiles(cfg *mem.MemConfig) ([]sim_file_entry, error) {
+	resolver := newExpressionResolver(cfg.Params)
+	all := make([]sim_file_entry, 0)
+	for bank_idx, bank := range cfg.SDRAM.Banks {
+		for _, bus := range bank.Buses {
+			entry, ok, err := makeBusSimFileEntry(resolver, bank_idx, bus)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				all = append(all, entry)
+			}
+		}
+	}
+	for _, line := range cfg.SDRAM.Cache_lanes {
+		entry, ok, err := makeCacheLaneSimFileEntry(resolver, line)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			all = append(all, entry)
+		}
+	}
+	return all, nil
+}
+
+func makeBusSimFileEntry(resolver *expressionResolver, bank_idx int, bus mem.SDRAMBus) (sim_file_entry, bool, error) {
+	simfile := strings.TrimSpace(bus.Simfile.Name)
+	if simfile == "" {
+		return sim_file_entry{}, false, nil
+	}
+	sim_data_width, err := mem.ResolveSimfileDataWidth("bus", bus.Name, bus.Data_width, bus.Simfile.Data_type, bus.Simfile.Big_endian)
+	if err != nil {
+		return sim_file_entry{}, false, err
+	}
+	if bus.Addr_width < 0 || bus.Addr_width >= strconv.IntSize {
+		return sim_file_entry{}, false, fmt.Errorf("invalid addr_width %d for bus %s", bus.Addr_width, bus.Name)
+	}
+	offset, err := resolveSimOffset(resolver, bus.Offset, "bus", bus.Name)
+	if err != nil {
+		return sim_file_entry{}, false, err
+	}
+	length := 1 << bus.Addr_width
+	if err := validateSimBounds(bank_idx, offset, length, "bus", bus.Name); err != nil {
+		return sim_file_entry{}, false, err
+	}
+	return sim_file_entry{
+		kind:       "bus",
+		name:       bus.Name,
+		path:       simfile,
+		bank:       bank_idx,
+		offset:     offset,
+		length:     length,
+		data_width: sim_data_width,
+		big_endian: bus.Simfile.Big_endian,
+	}, true, nil
+}
+
+func makeCacheLaneSimFileEntry(resolver *expressionResolver, line mem.SDRAMCacheLine) (sim_file_entry, bool, error) {
+	simfile := strings.TrimSpace(line.Simfile.Name)
+	if simfile == "" {
+		return sim_file_entry{}, false, nil
+	}
+	sim_data_width, err := mem.ResolveSimfileDataWidth("cache-lane", line.Name, line.Data_width, line.Simfile.Data_type, line.Simfile.Big_endian)
+	if err != nil {
+		return sim_file_entry{}, false, err
+	}
+	offset, err := resolveSimOffset(resolver, line.At.Offset, "cache-lane", line.Name)
+	if err != nil {
+		return sim_file_entry{}, false, err
+	}
+	length, err := parseSimSize(line.At.Length)
+	if err != nil {
+		return sim_file_entry{}, false, fmt.Errorf("invalid length for cache-lane %s: %w", line.Name, err)
+	}
+	if err := validateSimBounds(line.At.Bank, offset, length, "cache-lane", line.Name); err != nil {
+		return sim_file_entry{}, false, err
+	}
+	return sim_file_entry{
+		kind:       "cache-lane",
+		name:       line.Name,
+		path:       simfile,
+		bank:       line.At.Bank,
+		offset:     offset,
+		length:     length,
+		data_width: sim_data_width,
+		big_endian: line.Simfile.Big_endian,
+	}, true, nil
+}
+
+func resolveSimOffset(resolver *expressionResolver, text, kind, name string) (int, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0, nil
+	}
+	if value, err := parseIntLiteral(text); err == nil {
+		if value < 0 {
+			return 0, fmt.Errorf("negative offset for %s %s: %d", kind, name, value)
+		}
+		return value << 1, nil
+	}
+	offset_words, err := resolver.eval(text)
+	if err != nil {
+		return 0, fmt.Errorf("cannot evaluate offset for %s %s: %w", kind, name, err)
+	}
+	if offset_words < 0 {
+		return 0, fmt.Errorf("negative offset for %s %s: %d", kind, name, offset_words)
+	}
+	return offset_words << 1, nil
+}
+
+func validateSimBounds(bank, offset, length int, kind, name string) error {
+	bank_size := sdramBankSize()
+	if bank < 0 || bank > 3 {
+		return fmt.Errorf("%s %s targets invalid SDRAM bank %d", kind, name, bank)
+	}
+	if offset < 0 || length < 0 {
+		return fmt.Errorf("%s %s uses invalid offset/length", kind, name)
+	}
+	if offset+length > bank_size {
+		return fmt.Errorf("%s %s exceeds bank %d size (%d + %d > %d)", kind, name, bank, offset, length, bank_size)
+	}
+	return nil
+}
+
+func parseSimSize(text string) (int, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0, fmt.Errorf("size cannot be empty")
+	}
+	parts := size_re.FindStringSubmatch(text)
+	if parts == nil {
+		return 0, fmt.Errorf("size must be an integer number of bytes, or use the exact suffixes B, k, kB, M or MB")
+	}
+	size_value, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, fmt.Errorf("size must be an integer number of bytes, or use the exact suffixes B, k, kB, M or MB")
+	}
+	if size_value <= 0 {
+		return 0, fmt.Errorf("size must be greater than zero")
+	}
+	multiplier := 1
+	switch parts[2] {
+	case "k", "kB":
+		multiplier = 1024
+	case "M", "MB":
+		multiplier = 1024 * 1024
+	}
+	return size_value * multiplier, nil
+}
+
+func applySimFile(each sim_file_entry) (err error) {
+	data, err := os.ReadFile(each.path)
+	if err != nil {
+		return fmt.Errorf("cannot read simfile %s for %s %s: %w", each.path, each.kind, each.name, err)
+	}
+	if len(data) != each.length {
+		return fmt.Errorf("simfile %s for %s %s must be %d bytes but is %d", each.path, each.kind, each.name, each.length, len(data))
+	}
+	byte_swapped := false
+	if byte_swapped, err = swapSimFileData(data, each.data_width, each.big_endian); err != nil {
+		return fmt.Errorf("cannot prepare simfile %s for %s %s: %w", each.path, each.kind, each.name, err)
+	}
+	name := fmt.Sprintf("sdram_bank%d.bin", each.bank)
+	bank_data, err := readBankFile(name)
+	if err != nil {
+		return err
+	}
+	copy(bank_data[each.offset:each.offset+each.length], data)
+	if err := os.WriteFile(name, bank_data, 0664); err != nil {
+		return err
+	}
+	if verbose {
+		fmt.Printf("Applied simfile %-16s to bank=%d offset=%X length=%X", each.path, each.bank, each.offset, each.length)
+		if byte_swapped {
+			fmt.Printf(" (bytes swapped)")
+		}
+		fmt.Printf("\n")
+	}
+	return nil
+}
+
+func swapSimFileData(data []byte, data_width int, big_endian bool) (bool, error) {
+	if !big_endian {
+		return false, nil
+	}
+	word_bytes := data_width >> 3
+	if word_bytes <= 1 {
+		return false, fmt.Errorf("simfile.big_endian requires 16-bit or 32-bit data width")
+	}
+	if (len(data) % word_bytes) != 0 {
+		return false, fmt.Errorf("file length %d is not divisible by %d-byte words", len(data), word_bytes)
+	}
+	for k := 0; k < len(data); k += word_bytes {
+		for a, b := k, k+word_bytes-1; a < b; a, b = a+1, b-1 {
+			data[a], data[b] = data[b], data[a]
+		}
+	}
+	return true, nil
+}
+
+func readBankFile(name string) ([]byte, error) {
+	bank_size := sdramBankSize()
+	data, err := os.ReadFile(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make([]byte, bank_size), nil
+		}
+		return nil, err
+	}
+	if len(data) != bank_size {
+		return nil, fmt.Errorf("%s must be %d bytes but is %d", name, bank_size, len(data))
+	}
+	return data, nil
+}
+
+func sdramBankSize() int {
+	const (
+		eightMB   = 8 * 1024 * 1024
+		sixteenMB = 2 * eightMB
+	)
+	if macros.IsSet("JTFRAME_SDRAM_LARGE") {
+		return sixteenMB
+	}
+	return eightMB
+}
+
+func bankOffset(regCnt int, hinfo mra.HeaderOffset, rom []byte) ([]int, []string, error) {
 	header := macros.GetInt("JTFRAME_HEADER")
 	if regCnt < 5 {
 		regCnt = 5
@@ -227,9 +488,18 @@ func bankOffset(regCnt int, hinfo mra.HeaderOffset, rom []byte) ([]int, []string
 	}
 	// Final values from header (if defined).
 	for k := 1; k < len(hinfo.Regions); k++ {
-		pos := int(rom[hinfo.Start+(k<<1)]) << 8
-		pos |= int(rom[hinfo.Start+(k<<1)+1])
+		idx := hinfo.Start + (k << 1)
+		if idx+1 >= len(rom) {
+			return nil, nil, fmt.Errorf("wrong header: offset index %d for %s is outside ROM length %X", idx, hinfo.Regions[k], len(rom))
+		}
+		pos := (int(rom[idx]) << 8) | int(rom[idx+1])
+		if hinfo.Reverse {
+			pos = (int(rom[idx+1]) << 8) | int(rom[idx])
+		}
 		pos <<= hinfo.Bits
+		if pos+header > len(rom) {
+			return nil, nil, fmt.Errorf("wrong header: computed offset %X for %s exceeds ROM length %X", pos+header, hinfo.Regions[k], len(rom))
+		}
 		offsets[k] = pos + header
 		if verbose {
 			fmt.Printf("%-4d %-20s %X\n", k, hinfo.Regions[k], offsets[k])
@@ -242,12 +512,12 @@ func bankOffset(regCnt int, hinfo mra.HeaderOffset, rom []byte) ([]int, []string
 		}
 		fmt.Println()
 	}
-	return offsets, hinfo.Regions
+	return offsets, hinfo.Regions, nil
 }
 
 func parseMemConfig(core string) (*mem.MemConfig, error) {
 	var cfg mem.MemConfig
-	if err := mem.Parse_file(core, "mem.yaml", &cfg); err != nil {
+	if err := mem.ParseFile(core, "mem.yaml", &cfg); err != nil {
 		return nil, fmt.Errorf("cannot parse mem.yaml: %w", err)
 	}
 	return &cfg, nil
@@ -500,7 +770,7 @@ func dump(name string, rom []byte, p0, p1, lim, fill int) (int, error) {
 	if err := os.WriteFile(name, rom[p0:p1], 0664); err != nil {
 		return 0, err
 	}
-	// Complement up to 8MB.
+	// Complement up to the SDRAM bank size.
 	sz := p1 - p0
 	if sz >= fill {
 		return p1, nil
@@ -521,18 +791,23 @@ func dump(name string, rom []byte, p0, p1, lim, fill int) (int, error) {
 	return p1, nil
 }
 
-func makeSymlink(game string) {
+func makeSymlink(game string) error {
 	// Link ROM files.
 	src := filepath.Join(mustEnv("JTROOT"), "rom", game+".rom")
 	os.Remove("rom.bin")
-	os.Symlink(src, "rom.bin")
+	if err := os.Symlink(src, "rom.bin"); err != nil {
+		return err
+	}
 	// Link NVRAM files.
 	src = filepath.Join(mustEnv("JTROOT"), "rom", strings.ToUpper(game+".RAM"))
 	f, err := os.Open(src)
 	if err != nil {
-		return // No RAM file.
+		return nil // No RAM file.
 	}
 	defer f.Close()
 	os.Remove("nvram.bin")
-	os.Symlink(src, "nvram.bin")
+	if err := os.Symlink(src, "nvram.bin"); err != nil {
+		return err
+	}
+	return nil
 }

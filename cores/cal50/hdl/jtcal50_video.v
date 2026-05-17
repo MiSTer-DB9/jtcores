@@ -107,13 +107,13 @@ end
 // 17.45ms per frame, 2.05ms blanking, 512.5us sync (centered)
 jtframe_vtimer #(
     .HB_END  ( 9'd4   ),
-    .HB_START( 9'd380 ),
-    .HS_START( 9'd416 ),
-    .HS_END  ( 9'd480 ),
+    .HB_START( 9'd388 ),
+    .HS_START( 9'd409 ),
+    .HS_END  ( 9'd461 ),
     .HCNT_END( 9'd511 ),
     .V_START ( 9'd000 ),
-    .VS_START( 9'd252 ),
-    .VS_END  ( 9'd260 ),
+    .VS_START( 9'd253 ),
+    .VS_END  ( 9'd261 ),
     .VB_START( 9'd240 ),
     .VB_END  ( 9'd000 ),
     .VCNT_END( 9'd271 )

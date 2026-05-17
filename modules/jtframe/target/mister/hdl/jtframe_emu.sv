@@ -358,6 +358,12 @@ wire [SDRAMW-1:0] ba0_addr, ba1_addr, ba2_addr, ba3_addr;
 wire [ 3:0] ba_rd, ba_rdy, ba_ack, ba_dst, ba_dok, ba_wr;
 wire [15:0] ba0_din, ba1_din, ba2_din, ba3_din;
 wire [ 1:0] ba0_dsn, ba1_dsn, ba2_dsn, ba3_dsn;
+`ifdef JTFRAME_SDRAM_CACHE
+wire [SDRAMW-1:0] burst_addr;
+wire [ 1:0] burst_ba;
+wire        burst_rd, burst_wr, burst_ack, burst_dst, burst_dok, burst_rdy;
+wire [15:0] burst_din;
+`endif
 wire [15:0] sdram_dout;
 
 wire [ 7:0] st_addr, st_dout;
@@ -389,7 +395,7 @@ assign AUDIO_S = `JTFRAME_SIGNED_SND;
 wire [ 8:0] game_hdump,   ln_addr;
 wire [ 7:0] game_vrender, ln_v;
 wire        ln_done, ln_hs, ln_vs, ln_lvbl, ln_we;
-wire [15:0] ln_pxl, ln_data;
+wire [15:0] ln_dout, ln_pxl, ln_data;
 
 jtframe_mister #(
     .SDRAMW         ( SDRAMW         ),
@@ -417,6 +423,7 @@ u_frame(
     .game_rx        ( game_rx        ), // core-specific UART
     .game_tx        ( game_tx        ),
     .show_osd       ( show_osd       ),
+    .OSD_STATUS     ( OSD_STATUS     ),
     // Base video
     .game_r         ( red            ),
     .game_g         ( green          ),
@@ -445,6 +452,7 @@ u_frame(
     .ln_data        ( ln_data        ),
     .ln_done        ( ln_done        ),
     .ln_hs          ( ln_hs          ),
+    .ln_dout        ( ln_dout        ),
     .ln_pxl         ( ln_pxl         ),
     .ln_v           ( ln_v           ),
     .ln_vs          ( ln_vs          ),
@@ -499,6 +507,16 @@ u_frame(
     .ba1_addr   ( ba1_addr      ),
     .ba2_addr   ( ba2_addr      ),
     .ba3_addr   ( ba3_addr      ),
+`ifdef JTFRAME_SDRAM_CACHE
+    .burst_addr ( burst_addr    ),
+    .burst_ba   ( burst_ba      ),
+    .burst_rd   ( burst_rd      ),
+    .burst_wr   ( burst_wr      ),
+    .burst_ack  ( burst_ack     ),
+    .burst_dst  ( burst_dst     ),
+    .burst_dok  ( burst_dok     ),
+    .burst_rdy  ( burst_rdy     ),
+`endif
     .ba_rd      ( ba_rd         ),
     .ba_wr      ( ba_wr         ),
     .ba_dst     ( ba_dst        ),
@@ -513,6 +531,9 @@ u_frame(
     .ba2_dsn    ( ba2_dsn       ),
     .ba3_din    ( ba3_din       ),
     .ba3_dsn    ( ba3_dsn       ),
+`ifdef JTFRAME_SDRAM_CACHE
+    .burst_din  ( burst_din     ),
+`endif
 
     // ROM-load interface
     .prog_addr  ( prog_addr     ),
@@ -538,6 +559,15 @@ u_frame(
     .ioctl_rom      ( ioctl_rom      ),
     .ioctl_cart     ( ioctl_cart     ),
     .dwnld_busy     ( dwnld_busy     ),
+    // Save/Load
+    .sav_change     ( sav_change     ),
+    .sav_wait       ( sav_wait       ),
+    .sav_done       ( sav_done       ),
+    .sav_wr         ( sav_wr         ),
+    .sav_ack        ( sav_ack        ),
+    .sav_din        ( sav_din        ),
+    .sav_dout       ( sav_dout       ),
+    .sav_addr       ( sav_addr       ),
 //////////// board
     .rst            ( rst            ),
     .rst_n          ( rst_n          ), // unused

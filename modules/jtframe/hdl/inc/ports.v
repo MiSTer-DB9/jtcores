@@ -25,14 +25,22 @@
     output          sample,
 {{ end }}
     // Memory ports
+`ifdef JTFRAME_SDRAM_LARGE
+    input   [22:0]  prog_addr,
+`else
     input   [21:0]  prog_addr,
+`endif
     input   [ 7:0]  prog_data,
     input           prog_we,
     input   [ 1:0]  prog_ba,
     input   [25:0]  ioctl_addr,
     input           prom_we,
 {{- if .Download.Post_addr }}
+`ifdef JTFRAME_SDRAM_LARGE
+    output reg [22:0] post_addr,
+`else
     output reg [21:0] post_addr,
+`endif
 {{end}}
 {{- if .Download.Pre_addr }}
     output reg [25:0] pre_addr,
@@ -74,4 +82,15 @@
     output   {{ data_range . }} {{.Name}}_din,{{end }}{{if not .Dsn}}
     output   [ 1:0] {{.Name}}_dsn,{{end}}{{end }}
     input           {{.Name}}_ok{{end}}
+{{- end}}
+{{- $last := len .SDRAM.Cache_lanes }}
+{{- $last = sub $last 1}}
+{{- range $k,$v := .SDRAM.Cache_lanes}}
+    input    {{ data_range $v }} {{$v.Name}}_data,
+    output          {{$v.Name}}_rd,
+    output   {{ cache_line_addr_range $v }} {{$v.Name}}_addr,
+    input           {{$v.Name}}_ok{{ if $v.Rw }},
+    output          {{$v.Name}}_we,
+    output   {{ data_range $v }} {{$v.Name}}_din,
+    output   [{{ sub (byte_en_width $v.Data_width) 1 }}:0] {{$v.Name}}_dsn{{end}}{{ if ne $k $last }},{{end}}
 {{- end}}
