@@ -284,7 +284,10 @@ wire [15:0] joy_raw;
 // [MiSTer-DB9-Pro BEGIN] - Saturn key gate v1.5 (driven by hps_io UIO_DB9_KEY 0xFE bytestream)
 wire        saturn_unlocked;
 // [MiSTer-DB9-Pro END]
-// [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: full 128b hps_io status (upper 64b carry UserIO Joystick selector)
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: full 128b hps_io status. The
+// UserIO Joystick selector lives in jtframe's OSD-reserved `o` group
+// (status[37:36] / status[63]), not the top word, so it stays loaded on
+// CPS1 cores with long MRA DIP config strings (see cfgstr note).
 wire [127:0] status_full;
 assign status = status_full[63:0];
 // [MiSTer-DB9 END]
@@ -473,12 +476,14 @@ wire [15:0] joyusb_1, joyusb_2;
 
 
 `ifndef JTFRAME_NO_DB15
-// [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: status_full[127:126] = joy_type, status_full[125] = joy_2p
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: status_full[37:36] = joy_type, status_full[63] = joy_2p
 //   joy_type: 2'd0 Off, 2'd1 Saturn, 2'd2 DB9MD, 2'd3 DB15
-//   status_full is the full 128-bit hps_io status; module exposes only the lower 64b
-//   to upstream consumers via `status`. Upper 64b are local to jtframe_mister.
-wire [1:0] joy_type     = status_full[127:126];
-wire       joy_2p       = status_full[125];
+//   Bits sit in jtframe's OSD-reserved `o` group (status[63:32]), where the
+//   upstream DB15-only selector also lived (o5). Moved off the top status
+//   word (127:112) because CPS1 cores with long MRA DIP config strings did
+//   not keep those bits stable, dropping DB15 mid-game.
+wire [1:0] joy_type     = status_full[37:36];
+wire       joy_2p       = status_full[63];
 wire       joy_any_en   = |joy_type;
 // [MiSTer-DB9 END]
 jtframe_joymux #(.BUTTONS(BUTTONS)) u_joymux(

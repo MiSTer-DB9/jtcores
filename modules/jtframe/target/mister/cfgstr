@@ -39,13 +39,18 @@ d5P1oAD,Crop Offset,0,2,4,8,10,12,-12,-10,-8,-6,-4,-2;
 {{ if .JTFRAME_OSD_VOL }}           O67,FX volume,high,highest,lowest,low; {{ end }}
 {{ if .JTFRAME_OSD_TEST }}          OA,Service mode,Off,On; {{ end }}
 {{ if .JTFRAME_DIAL }}              o03,Sensitivity,high,highest,lowest,low;{{end}}
-{{- /* [MiSTer-DB9-Pro BEGIN] - DB9MD/DB15/Saturn selector (status[127:126], status[125]).
+{{- /* [MiSTer-DB9-Pro BEGIN] - DB9MD/DB15/Saturn selector (status[37:36], status[63]).
        Saturn first to avoid OSD-cycle ghost inputs (DB9MD reads Saturn data lines as garbage).
-       UART (status[6]) remains independent. */ -}}
+       UART (status[38]=o6) remains independent.
+       Bits live in jtframe's OSD-reserved `o` group (status[63:32]), like the
+       upstream DB15-only selector did (o5). Kept out of the top status word
+       (127:112): CPS1 cores with long MRA DIP config strings did not hold the
+       high bits stable, so DB15 dropped out mid-game. 36/37/63 are unused by
+       any jtcores cfgstr/CORE_OSD option and outside the MRA DIP range. */ -}}
 {{ if .JTFRAME_UART }}              o6,UART,Off,On; {{ end }}
 {{ if .JTFRAME_NO_DB15 }} {{ else }}
-                                    O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;
-                                    O[125],UserIO Players,1P,2P;
+                                    O[37:36],UserIO Joystick,Off,Saturn,DB9MD,DB15;
+                                    O[63],UserIO Players,1P,2P;
 {{ end }}
 {{- /* [MiSTer-DB9-Pro END] */ -}}
 {{ if .JTFRAME_CREDITS }} OC,Show credits in pause,On,Off; {{ end }}
