@@ -6,6 +6,10 @@ should be used to update $JTROOT/doc/mame.xml with new data each time a new
 core is added. The core folder should contain both cfg/macros.def and
 cfg/mame2mra.toml.
 
+If `$JTROOT/doc/custom.xml` exists, it is parsed after `mame.xml` and merged
+into the machine list. Entries with the same machine name override the one
+coming from `mame.xml`.
+
 Each repository is meant to have a reduced mame.xml file in $JTROOT/doc as
 part of the source file committed in git.
 
@@ -22,6 +26,12 @@ Orientation={ Fixed=true } # use when rotation CW/CCW information from MAME is n
 
 [parse]
 sourcefile=[ "mamefile1.cpp", "mamefile2.cpp"... ]
+# Explicit parent sets to keep clone families together when the parent
+# is not part of the selected sourcefile list. The description is used
+# to name alternate folders.
+parents=[
+    { name="parentset", description="Parent Description" }
+]
 skip.Setnames=["willskip1","willskip2"]
 skip.Bootlegs=true # to skip bootlegs
 debug={ # do not parse when --nodbg is set
@@ -118,10 +128,13 @@ dial = [
 [ROM]
 # these MAME ROM regions make up the .rom file (index 1 in MiSTer)
 # only specify regions that need parameters
+# name accepts glob patterns with * and ? to merge multiple MAME regions.
+# This only applies to ROM.regions, and the pattern must match at least one region.
 regions = [
 	{ name=maincpu, machine=optional, start="MACRONAME_START", width=16, len=0x10000,
 		reverse=true, no_offset=true, overrules=[ { names="...", reverse=false }, ... ] },
 	{ name==soundcpu, sequence=[2,1,0,0], no_offset=true } # inverts the order and repeats the first ROM
+	{ name="simm3.?", width=16, sequence=[0,1,2,3,4,5,6,7], no_offset=true } # merge matching MAME regions
 	{ name=plds, skip=true },
 	# Set mirror=true to duplicate the parts until the region is filled, instead of filling with FF
 	{ name=gfx3, rename="obj", mirror=true },

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"jotego/jtframe/macros"
+	"jotego/jtframe/mem"
+	"jotego/jtframe/mra"
 )
 
 func TestSwapBytes(t *testing.T) {
@@ -224,6 +226,62 @@ func TestDumpRemovesEmptyRegionFile(t *testing.T) {
 	}
 }
 
+func TestSdramBankSizeDefaultsTo8MB(t *testing.T) {
+	macros.MakeFromMap(map[string]string{})
+	got := sdramBankSize()
+	want := 8 * 1024 * 1024
+	if got != want {
+		t.Fatalf("sdramBankSize default mismatch: got=%d want=%d", got, want)
+	}
+}
+
+func TestSdramBankSizeUsesLargeMacroFallback(t *testing.T) {
+	macros.MakeFromMap(map[string]string{
+		"JTFRAME_SDRAM_LARGE": "1",
+	})
+	got := sdramBankSize()
+	want := 16 * 1024 * 1024
+	if got != want {
+		t.Fatalf("sdramBankSize large mismatch: got=%d want=%d", got, want)
+	}
+}
+
+func TestBankOffsetReadsReversedHeaderEntries(t *testing.T) {
+	macros.MakeFromMap(map[string]string{
+		"JTFRAME_HEADER": "16",
+	})
+	rom := make([]byte, 0x250010)
+	copy(rom, []byte{
+		0x00, 0x00,
+		0x40, 0x00, // 0x0040 << 12 = 0x40000
+		0x50, 0x01, // 0x0150 << 12 = 0x150000
+		0x50, 0x02, // 0x0250 << 12 = 0x250000
+	})
+	hinfo := mra.HeaderOffset{
+		Bits:    12,
+		Reverse: true,
+		Start:   0,
+		Regions: []string{"maincpu", "audiocpu", "k052109", "obj"},
+	}
+
+	offsets, regions, err := bankOffset(len(hinfo.Regions), hinfo, rom)
+	if err != nil {
+		t.Fatalf("bankOffset returned error: %v", err)
+	}
+	if len(regions) != len(hinfo.Regions) {
+		t.Fatalf("region count mismatch: got=%d want=%d", len(regions), len(hinfo.Regions))
+	}
+	if got, want := offsets[1], 0x40000+16; got != want {
+		t.Fatalf("bank 1 offset mismatch: got=%#x want=%#x", got, want)
+	}
+	if got, want := offsets[2], 0x150000+16; got != want {
+		t.Fatalf("bank 2 offset mismatch: got=%#x want=%#x", got, want)
+	}
+	if got, want := offsets[3], 0x250000+16; got != want {
+		t.Fatalf("bank 3 offset mismatch: got=%#x want=%#x", got, want)
+	}
+}
+
 func TestRemapAddressBitsHvvvx(t *testing.T) {
 	macros.MakeFromMap(map[string]string{"JTFRAME_HEADER": "0"})
 	gfx, err := parseGfxPattern("hvvvx")
@@ -296,6 +354,167 @@ func TestShouldApplyGfxEn(t *testing.T) {
 	}
 	if !shouldApplyGfxEn("metrocrs", "metrocrs") {
 		t.Fatalf("metrocrs should apply for game metrocrs")
+	}
+}
+
+func TestCollectSimFiles(t *testing.T) {
+	cfg := &mem.MemConfig{
+		Params: []mem.Param{{Name: "TILES", Value: "22'h100"}},
+		SDRAM: mem.SDRAMCfg{
+			Banks: []mem.SDRAMBank{{
+				Buses: []mem.SDRAMBus{{
+					Name:       "tiles",
+					Offset:     "TILES",
+					Addr_width: 4,
+					Data_width: 16,
+					Simfile:    mem.SDRAMBusSimfile{Name: "tiles.bin", Big_endian: true},
+				}},
+			}},
+			Cache_lanes: []mem.SDRAMCacheLine{{
+				Name:       "line",
+				Data_width: 32,
+				Blocks:     mem.SDRAMCacheCfg{Count: 1, Size: "64B"},
+				At:         mem.SDRAMCacheAddr{Bank: 3, Offset: "0x20", Length: "64B"},
+				Simfile:    mem.SDRAMCacheSimfile{Name: "line.bin", Big_endian: true},
+			}},
+		},
+	}
+	all, err := collectSimFiles(cfg)
+	if err != nil {
+		t.Fatalf("collectSimFiles returned error: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("collectSimFiles length mismatch: got=%d want=2", len(all))
+	}
+	if all[0].offset != 0x200 || all[0].length != 16 || !all[0].big_endian {
+		t.Fatalf("unexpected bus sim entry: %+v", all[0])
+	}
+	if all[1].bank != 3 || all[1].offset != 0x40 || all[1].length != 64 || !all[1].big_endian {
+		t.Fatalf("unexpected cache-lane sim entry: %+v", all[1])
+	}
+}
+
+func TestCollectSimFilesRejects8BitBigEndian(t *testing.T) {
+	cfg := &mem.MemConfig{
+		SDRAM: mem.SDRAMCfg{
+			Banks: []mem.SDRAMBank{{
+				Buses: []mem.SDRAMBus{{
+					Name:       "tiles",
+					Addr_width: 4,
+					Data_width: 8,
+					Simfile:    mem.SDRAMBusSimfile{Name: "tiles.bin", Big_endian: true},
+				}},
+			}},
+		},
+	}
+	_, err := collectSimFiles(cfg)
+	if err == nil {
+		t.Fatalf("collectSimFiles should reject 8-bit big-endian simfiles")
+	}
+}
+
+func TestCollectSimFilesUsesExplicitWideCacheLaneSimDataType(t *testing.T) {
+	cfg := &mem.MemConfig{
+		SDRAM: mem.SDRAMCfg{
+			Cache_lanes: []mem.SDRAMCacheLine{{
+				Name:       "tiles",
+				Data_width: 128,
+				Blocks:     mem.SDRAMCacheCfg{Count: 1, Size: "64B"},
+				At:         mem.SDRAMCacheAddr{Bank: 3, Offset: "0x20", Length: "64B"},
+				Simfile:    mem.SDRAMCacheSimfile{Name: "tiles.bin", Big_endian: true, Data_type: "u32"},
+			}},
+		},
+	}
+	all, err := collectSimFiles(cfg)
+	if err != nil {
+		t.Fatalf("collectSimFiles returned error: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("collectSimFiles length mismatch: got=%d want=1", len(all))
+	}
+	if all[0].data_width != 32 {
+		t.Fatalf("wrong resolved simfile data width: got=%d want=32", all[0].data_width)
+	}
+}
+
+func TestCollectSimFilesRejectsWideBigEndianWithoutDataType(t *testing.T) {
+	cfg := &mem.MemConfig{
+		SDRAM: mem.SDRAMCfg{
+			Cache_lanes: []mem.SDRAMCacheLine{{
+				Name:       "tiles",
+				Data_width: 128,
+				Blocks:     mem.SDRAMCacheCfg{Count: 1, Size: "64B"},
+				At:         mem.SDRAMCacheAddr{Bank: 3, Offset: "0x20", Length: "64B"},
+				Simfile:    mem.SDRAMCacheSimfile{Name: "tiles.bin", Big_endian: true},
+			}},
+		},
+	}
+	_, err := collectSimFiles(cfg)
+	if err == nil {
+		t.Fatalf("collectSimFiles should reject wide big-endian simfiles without data_type")
+	}
+	if !strings.Contains(err.Error(), "simfile.data_type") {
+		t.Fatalf("wrong error for missing data_type: %v", err)
+	}
+}
+
+func TestApplySimFileCreatesAndPatchesBank(t *testing.T) {
+	dir := t.TempDir()
+	restore := chdir(t, dir)
+	defer restore()
+
+	if err := os.WriteFile("tiles.bin", []byte{0, 1, 2, 3}, 0664); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	entry := sim_file_entry{
+		kind:       "bus",
+		name:       "tiles",
+		path:       "tiles.bin",
+		bank:       2,
+		offset:     2,
+		length:     4,
+		data_width: 16,
+		big_endian: true,
+	}
+	if err := applySimFile(entry); err != nil {
+		t.Fatalf("applySimFile returned error: %v", err)
+	}
+	got, err := os.ReadFile("sdram_bank2.bin")
+	if err != nil {
+		t.Fatalf("failed reading output bank: %v", err)
+	}
+	if len(got) != sdramBankSize() {
+		t.Fatalf("bank size mismatch: got=%d want=%d", len(got), sdramBankSize())
+	}
+	want := []byte{0, 0, 1, 0, 3, 2}
+	if !bytes.Equal(got[:6], want) {
+		t.Fatalf("patched bank mismatch: got=%v want=%v", got[:6], want)
+	}
+}
+
+func TestApplySimFileRejectsWrongSize(t *testing.T) {
+	dir := t.TempDir()
+	restore := chdir(t, dir)
+	defer restore()
+
+	if err := os.WriteFile("tiles.bin", []byte{0, 1, 2}, 0664); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	entry := sim_file_entry{
+		kind:       "bus",
+		name:       "tiles",
+		path:       "tiles.bin",
+		bank:       0,
+		offset:     0,
+		length:     4,
+		data_width: 16,
+	}
+	err := applySimFile(entry)
+	if err == nil {
+		t.Fatalf("applySimFile should reject wrong-sized simfiles")
+	}
+	if !strings.Contains(err.Error(), "must be 4 bytes") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

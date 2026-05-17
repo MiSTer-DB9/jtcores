@@ -25,13 +25,28 @@
 // each rom file in the jtframe_prom instantiation. However, sometimes
 // the hierarchy will not allow it or the code may get messy.
 
-module jtframe_dwnld(
+/* verilator lint_off WIDTH */
+module jtframe_dwnld #(
+    parameter        SDRAMW    = 23, // bank size, default = 8MB for 32MB SDRAM
+    parameter        SIMFILE   = "rom.bin",
+    parameter [25:0] PROM_START= `ifdef JTFRAME_PROM_START `JTFRAME_PROM_START `else ~26'd0 `endif,
+    parameter [25:0] BA1_START = ~26'd0,
+    parameter [25:0] BA2_START = ~26'd0,
+    parameter [25:0] BA3_START = ~26'd0,
+    parameter [25:0] HEADER    = `ifdef JTFRAME_HEADER `JTFRAME_HEADER `else 0 `endif,
+    parameter [25:0] SWAB      = 0, // swap every pair of input bytes (SDRAM only)
+    parameter        GFX8B0    = 0, // bit 0 for HHVVV  sequence
+    parameter        GFX16B0   = 0, // bit 0 for HHVVVV sequence
+    parameter        BALUT     = 0, // 1 to use the header as the start for banks and PROM sections
+                                    // header format: two bytes for the offset of each bank and PROM
+    parameter        LUTSH     = 0  // bit shift to apply to ioctl_addr for BALUT comparisons
+)(
     input                clk,
     input                ioctl_rom,
     input      [25:0]    ioctl_addr, // max 64 MB
     input      [ 7:0]    ioctl_dout,
     input                ioctl_wr,
-    output reg [22:1]    prog_addr,
+    output reg [SDRAMW-1:1] prog_addr,
     output     [15:0]    prog_data,
     output reg [ 1:0]    prog_mask, // active low
     output reg           prog_we,
@@ -48,20 +63,6 @@ module jtframe_dwnld(
     output reg           header,
     input                sdram_ack
 );
-/* verilator lint_off WIDTH */
-parameter        SIMFILE   = "rom.bin";
-parameter [25:0] PROM_START= `ifdef JTFRAME_PROM_START `JTFRAME_PROM_START `else ~26'd0 `endif;
-parameter [25:0] BA1_START = ~26'd0,
-                 BA2_START = ~26'd0,
-                 BA3_START = ~26'd0,
-                 HEADER    = `ifdef JTFRAME_HEADER `JTFRAME_HEADER `else 0 `endif,
-                 SWAB      = 0; // swap every pair of input bytes (SDRAM only)
-parameter        GFX8B0    = 0, // bit 0 for HHVVV  sequence
-                 GFX16B0   = 0; // bit 0 for HHVVVV sequence
-// automatic bank assignment based on a LUT sitting at the header start
-parameter        BALUT     = 0, // 1 to use the header as the start for banks and PROM sections
-                                // header format: two bytes for the offset of each bank and PROM
-                 LUTSH     = 0; // bit shift to apply to ioctl_addr for BALUT comparisons
 
 `ifdef SIMULATION
 initial begin
@@ -105,6 +106,8 @@ reg  [25:0] offset;
 reg  [25:0] eff_addr;
 reg [2*5*8-1:0] ba_start=0; // 16 bits per offset
 
+initial prog_ba = 0;
+
 always @(*) begin
     case( bank )
         2'd0: offset = 0;
@@ -118,7 +121,7 @@ end
 
 generate
     if( BALUT==0 || !BA_EN ) begin
-        always @(*) begin
+        always @(part_addr) begin
             bank = !BA_EN ? 2'd0 : ( /* verilator lint_off UNSIGNED */
                     part_addr >= BA3_START ? 2'd3 : (
                     part_addr >= BA2_START ? 2'd2 : (
@@ -147,11 +150,11 @@ endgenerate
 always @(posedge clk) begin
     if ( ioctl_wr && ioctl_rom && !header ) begin
         if( is_prom ) begin
-            prog_addr <= part_addr[21:0];
+            prog_addr <= part_addr[SDRAMW-2:0];
             prom_we   <= 1;
             prog_we   <= 0;
         end else begin
-            prog_addr <= eff_addr[22:1];
+            prog_addr <= eff_addr[SDRAMW-1:1];
             prom_we   <= 0;
             prog_we   <= 1;
             prog_ba   <= bank;
@@ -215,7 +218,7 @@ always @(posedge clk) begin
         prog_we   <= 0;
         prog_mask <= 2'b11;
         data_out  <= mem[dumpcnt];
-        prog_addr <= dumpcnt[21:0]-HEADER;
+        prog_addr <= dumpcnt[SDRAMW-2:0]-HEADER;
         dumpcnt   <= dumpcnt+1;
     end else begin
         prom_we <= 0;

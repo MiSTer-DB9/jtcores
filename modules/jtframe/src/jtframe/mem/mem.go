@@ -1,4 +1,4 @@
-/*  This file is part of JT_FRAME.
+/*  This file is part of JTFRAME.
     JTFRAME program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -24,8 +24,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/bits"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -48,30 +50,48 @@ func Run(args Args) (e error) {
 		extra_macros = []string{macros.JTFRAME_RELEASE}
 	}
 	macros.MakeMacros(args.Core, args.Target, extra_macros...)
-	if e := Parse_file(args.Core, "mem.yaml", &cfg); e != nil {
+	if e := ParseFile(args.Core, "mem.yaml", &cfg); e != nil {
 		// the mem.yaml file does not exist, that's
 		// normally ok
 		fmt.Println(e)
 		os.Exit(1)
 	}
-	if e = bankOffset( &cfg, args.Core ); e!=nil { return e }
+	if e = bankOffset(&cfg, args.Core); e != nil {
+		return e
+	}
 	// Checks
-	if e = cfg.check_banks(); e!=nil { return e }
-	if e = cfg.check_bram (); e!=nil { return e }
+	if e = cfg.check_sdram(); e != nil {
+		return e
+	}
+	if e = cfg.check_bram(); e != nil {
+		return e
+	}
 	cfg.calc_prom_we()
 	// Data arrangement
-	fill_implicit_ports( &cfg )
-	make_ioctl( &cfg )
-	fill_gfx_sort( &cfg )
+	fill_implicit_ports(&cfg)
+	make_ioctl(&cfg)
+	cfg.fill_gfx_sort()
 	// Fill the clock configuration
-	make_clocks( &cfg )
+	make_clocks(&cfg)
 	// Audio configuration
-	e = Make_audio( &cfg, args.Core, args.get_path("",false) ); if e!=nil { return e }
+	e = Make_audio(&cfg, args.Core, args.get_path("", false))
+	if e != nil {
+		return e
+	}
 	// Execute the template
 	cfg.Core = args.Core
-	e = make_sdram(args, &cfg);     if e!=nil { return e }
-	e = add_game_ports(args, &cfg); if e!=nil { return e }
-	e = make_dump2bin(args.Core, &cfg); if e!=nil { return e }
+	e = make_sdram(args, &cfg)
+	if e != nil {
+		return e
+	}
+	e = add_game_ports(args, &cfg)
+	if e != nil {
+		return e
+	}
+	e = make_dump2bin(args.Core, &cfg)
+	if e != nil {
+		return e
+	}
 	return nil
 }
 
@@ -88,27 +108,32 @@ func (arg Args) get_path(fname string, prefix bool) string {
 }
 
 // Template helper functions: implementation of "Bus" interface (see types.go)
-func (bus SDRAMBus) Get_aw() int { return bus.Addr_width }
-func (bus BRAMBus)  Get_aw() int { return bus.Addr_width }
-func (bus AudioCh)  Get_aw() int { return bus.Data_width }
-func (bus SDRAMBus) Get_dw() int { return bus.Data_width }
-func (bus BRAMBus)  Get_dw() int { return bus.Data_width }
-func (bus AudioCh)  Get_dw() int { return bus.Data_width }
-func (bus SDRAMBus) Get_dname() string { return bus.Name+"_data" }
-func (bus BRAMBus)  Get_dname() string {
-	if bus.ROM.Offset!="" {
-		return bus.Name+"_data"
+func (bus SDRAMBus) Get_aw() int       { return bus.Addr_width }
+func (bus BRAMBus) Get_aw() int        { return bus.Addr_width }
+func (bus AudioCh) Get_aw() int        { return bus.Data_width }
+func (bus SDRAMBus) Get_dw() int       { return bus.Data_width }
+func (bus BRAMBus) Get_dw() int        { return bus.Data_width }
+func (bus AudioCh) Get_dw() int        { return bus.Data_width }
+func (bus SDRAMCacheLine) Get_dw() int { return bus.Data_width }
+func (bus SDRAMCacheLine) Get_aw() int { return cache_line_aw(bus) }
+func (bus SDRAMBus) Get_dname() string { return bus.Name + "_data" }
+func (bus BRAMBus) Get_dname() string {
+	if bus.ROM.Offset != "" {
+		return bus.Name + "_data"
 	} else {
-		return bus.Name+"_dout"
+		return bus.Name + "_dout"
 	}
 }
-func (bus AudioCh)  Get_dname() string   { return bus.Name }
-func (bus SDRAMBus) Is_wr() bool         { return bus.Rw }
-func (bus AudioCh)  Is_wr() bool         { return false }
-func (bus BRAMBus)  Is_wr() bool         { return bus.Rw || bus.Dual_port.Rw }
-func (bus SDRAMBus) Is_nbits(n int) bool { return bus.Data_width == n }
-func (bus BRAMBus)  Is_nbits(n int) bool { return bus.Data_width == n }
-func (bus AudioCh)  Is_nbits(n int) bool { return bus.Data_width == n }
+func (bus AudioCh) Get_dname() string          { return bus.Name }
+func (bus SDRAMCacheLine) Get_dname() string   { return bus.Name }
+func (bus SDRAMBus) Is_wr() bool               { return bus.Rw }
+func (bus AudioCh) Is_wr() bool                { return false }
+func (bus BRAMBus) Is_wr() bool                { return bus.Rw || bus.Dual_port.Rw }
+func (bus SDRAMCacheLine) Is_wr() bool         { return bus.Rw }
+func (bus SDRAMBus) Is_nbits(n int) bool       { return bus.Data_width == n }
+func (bus BRAMBus) Is_nbits(n int) bool        { return bus.Data_width == n }
+func (bus AudioCh) Is_nbits(n int) bool        { return bus.Data_width == n }
+func (bus SDRAMCacheLine) Is_nbits(n int) bool { return bus.Data_width == n }
 
 func addr_range(bus Bus) string {
 	return fmt.Sprintf("[%2d:%d]", bus.Get_aw()-1, bus.Get_dw()>>4)
@@ -126,26 +151,97 @@ func slot_addr_width(bus SDRAMBus) string {
 	}
 }
 
+func cache_line_span_bytes(line SDRAMCacheLine) int {
+	if line.Span_bytes != 0 {
+		return line.Span_bytes
+	}
+	return line.At.Length_bytes
+}
+
+func cache_line_aw(line SDRAMCacheLine) int {
+	span_bytes := cache_line_span_bytes(line)
+	if span_bytes == 0 {
+		return 0
+	}
+	return bits.Len(uint(span_bytes)) - 1
+}
+
+func cache_data_aw0(dw int) int {
+	switch dw {
+	case 8:
+		return 0
+	case 16:
+		return 1
+	case 32:
+		return 2
+	case 64:
+		return 3
+	case 128:
+		return 4
+	default:
+		return 0
+	}
+}
+
+func cache_line_addr_range(line SDRAMCacheLine) string {
+	aw0 := cache_data_aw0(line.Data_width)
+	return fmt.Sprintf("[%2d:%d]", cache_line_aw(line)-1, aw0)
+}
+
+func cache_line_uses_banked_at(line SDRAMCacheLine) bool {
+	return line.At.Defined || line.At.Length != "" || line.At.Offset != "" || line.At.Bank != 0
+}
+
+func cache_bank_size_bytes() int64 {
+	if macros.IsSet("JTFRAME_SDRAM_LARGE") {
+		return 16 * 1024 * 1024
+	}
+	return 8 * 1024 * 1024
+}
+
+func cache_total_sdram_bytes() int {
+	return int(cache_bank_size_bytes() << 2)
+}
+
 func data_name(bus Bus) string     { return bus.Get_dname() }
 func writeable(bus Bus) bool       { return bus.Is_wr() }
 func is_nbits(bus Bus, n int) bool { return bus.Is_nbits(n) }
+func byte_en_width(dw int) int     { return dw >> 3 }
 
 var funcMap = template.FuncMap{
-	"addr_range":      addr_range,
-	"data_range":      data_range,
-	"slot_addr_width": slot_addr_width,
-	"data_name":       data_name,
-	"writeable":       writeable,
-	"is_nbits":        is_nbits,
+	"addr_range":            addr_range,
+	"cache_line_aw":         cache_line_aw,
+	"cache_line_addr_range": cache_line_addr_range,
+	"data_range":            data_range,
+	"slot_addr_width":       slot_addr_width,
+	"data_name":             data_name,
+	"writeable":             writeable,
+	"is_nbits":              is_nbits,
+	"byte_en_width":         byte_en_width,
 }
 
-func Parse_file(core, filename string, cfg *MemConfig) error {
-	read_yaml(core, filename, cfg)
+func ParseFile(core, filename string, cfg *MemConfig) error {
+	if err := read_yaml(core, filename, cfg); err != nil {
+		return err
+	}
 	parse_include_files(core, cfg)
 	// Reload the YAML to overwrite values that the included files may have set
-	read_yaml(core, filename, cfg)
+	if err := read_yaml(core, filename, cfg); err != nil {
+		return err
+	}
 	delete_optional(cfg)
-	// Update the MemType strings
+	cfg.normalize_sdram_banks()
+	cfg.normalize_bram_data_width()
+	if err := cfg.normalize_bram(); err != nil {
+		return err
+	}
+	if err := cfg.check_gfx_sort(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (cfg *MemConfig) normalize_sdram_banks() {
 	for k, bank := range cfg.SDRAM.Banks {
 		ram_cnt := 0
 		for j, each := range bank.Buses {
@@ -162,13 +258,17 @@ func Parse_file(core, filename string, cfg *MemConfig) error {
 			cfg.SDRAM.Banks[k].MemType = "rom"
 		}
 	}
-	// Make data_width 8 if it is missing
+}
+
+func (cfg *MemConfig) normalize_bram_data_width() {
 	for k, each := range cfg.BRAM {
 		if each.Data_width == 0 {
 			cfg.BRAM[k].Data_width = 8
 		}
 	}
-	// check that gfx_sort expressions are supported
+}
+
+func (cfg *MemConfig) check_gfx_sort() error {
 	for _, bank := range cfg.SDRAM.Banks {
 		for _, each := range bank.Buses {
 			switch each.Gfx {
@@ -176,13 +276,38 @@ func Parse_file(core, filename string, cfg *MemConfig) error {
 				"hvvvv", "hvvvvx", "hvvvvxx",
 				"hhvvv", "hhvvvv", "hhvvvx", "hhvvvvx", "hhvvvxx", "hhvvvvxx",
 				"vhhvvv", "vhhvvvx", "vhhvvvxx":
-				break
 			default:
-				{
-					return fmt.Errorf("Unsupported gfx_sort %s", each.Gfx)
-				}
+				return fmt.Errorf("Unsupported gfx_sort %s", each.Gfx)
 			}
 		}
+	}
+	return nil
+}
+
+func (cfg *MemConfig) normalize_bram() error {
+	for k := range cfg.BRAM {
+		bram := &cfg.BRAM[k]
+		if bram.Simfile.Big_endian && bram.Data_width == 8 {
+			return fmt.Errorf("BRAM %s cannot use simfile.big_endian with 8-bit data width", bram.Name)
+		}
+		if bram.Size == nil {
+			continue
+		}
+		if bram.Addr_width != 0 {
+			return fmt.Errorf("BRAM %s cannot define both size and addr_width", bram.Name)
+		}
+
+		size_bytes, err := parse_memory_size(fmt.Sprint(bram.Size))
+		if err != nil {
+			return fmt.Errorf("invalid size for BRAM %s: %w", bram.Name, err)
+		}
+		if size_bytes > 512*1024 {
+			return fmt.Errorf("invalid size for BRAM %s: size %d bytes exceeds 512kB", bram.Name, size_bytes)
+		}
+		if size_bytes&(size_bytes-1) != 0 {
+			return fmt.Errorf("invalid size for BRAM %s: size %d bytes is not an exact power of two", bram.Name, size_bytes)
+		}
+		bram.Addr_width = bits.Len(uint(size_bytes)) - 1
 	}
 	return nil
 }
@@ -192,16 +317,22 @@ func parse_include_files(core string, cfg *MemConfig) {
 	copy(include_copy, cfg.Include)
 	cfg.Include = nil
 	for _, entry := range include_copy {
-		if entry.File=="" && entry.Core=="" { continue }
-		if entry.File == "" { entry.File = "mem.yaml" }
-		if entry.Core == "" { entry.Core=core }
-		Parse_file(entry.Core, entry.File, cfg)
+		if entry.File == "" && entry.Core == "" {
+			continue
+		}
+		if entry.File == "" {
+			entry.File = "mem.yaml"
+		}
+		if entry.Core == "" {
+			entry.Core = core
+		}
+		ParseFile(entry.Core, entry.File, cfg)
 	}
 }
 
 // used for testing the yaml package
 func unmarshal(buffer []byte, storage any) error {
-	return yaml.Unmarshal(buffer,storage)
+	return yaml.Unmarshal(buffer, storage)
 }
 
 func read_yaml(core, filename string, cfg *MemConfig) (e error) {
@@ -238,20 +369,34 @@ func delete_optional(cfg *MemConfig) {
 func delete_optional_sdram(cfg *MemConfig) {
 	for k, _ := range cfg.SDRAM.Banks {
 		total := len(cfg.SDRAM.Banks[k].Buses)
-		if total==0 { continue }
-		optional := make([]Optional,total)
-		for j,_ := range cfg.SDRAM.Banks[k].Buses {
-			optional[j]=&cfg.SDRAM.Banks[k].Buses[j]
+		if total == 0 {
+			continue
+		}
+		optional := make([]Optional, total)
+		for j, _ := range cfg.SDRAM.Banks[k].Buses {
+			optional[j] = &cfg.SDRAM.Banks[k].Buses[j]
 		}
 		enabled := find_enabled(optional)
-		cfg.SDRAM.Banks[k].Buses = copy_enabled(cfg.SDRAM.Banks[k].Buses,enabled)
+		cfg.SDRAM.Banks[k].Buses = copy_enabled(cfg.SDRAM.Banks[k].Buses, enabled)
 	}
+	total := len(cfg.SDRAM.Cache_lanes)
+	if total == 0 {
+		return
+	}
+	optional := make([]Optional, total)
+	for k := range cfg.SDRAM.Cache_lanes {
+		optional[k] = &cfg.SDRAM.Cache_lanes[k]
+	}
+	enabled := find_enabled(optional)
+	cfg.SDRAM.Cache_lanes = copy_enabled(cfg.SDRAM.Cache_lanes, enabled)
 }
 
 func delete_optional_bram(cfg *MemConfig) {
 	total := len(cfg.BRAM)
-	if total==0 { return }
-	optional := make([]Optional,total)
+	if total == 0 {
+		return
+	}
+	optional := make([]Optional, total)
 	for k, _ := range cfg.BRAM {
 		optional[k] = &cfg.BRAM[k]
 	}
@@ -284,10 +429,12 @@ func copy_enabled[Slice ~[]E, E any](ref Slice, valid []int) (copy Slice) {
 	if len(valid) > len(ref) {
 		panic(fmt.Errorf("Not enough elements in ref slice"))
 	}
-	if len(valid)==len(ref) { return ref }
-	copy = make(Slice,0,len(valid))
-	for _,copy_idx := range valid {
-		copy=append(copy,ref[copy_idx])
+	if len(valid) == len(ref) {
+		return ref
+	}
+	copy = make(Slice, 0, len(valid))
+	for _, copy_idx := range valid {
+		copy = append(copy, ref[copy_idx])
 	}
 	return copy
 }
@@ -300,10 +447,14 @@ func make_sdram(finder path_finder, cfg *MemConfig) (e error) {
 	prom_dwnld := filepath.Join(tpath, "prom_dwnld.v")
 	t := template.New("game_sdram.v").Funcs(funcMap).Funcs(sprig.FuncMap())
 	t.Funcs(audio_template_functions)
-	_, e = t.ParseFiles(game_audio,game_sdram,ioctl_dump,prom_dwnld)
-	if e!=nil { return e }
+	_, e = t.ParseFiles(game_audio, game_sdram, ioctl_dump, prom_dwnld)
+	if e != nil {
+		return e
+	}
 	var buffer bytes.Buffer
-	if e = t.Execute(&buffer, cfg); e!= nil { return e }
+	if e = t.Execute(&buffer, cfg); e != nil {
+		return e
+	}
 	// Dump the file
 	outpath := finder.get_path("_game_sdram.v", true)
 	ioutil.WriteFile(outpath, buffer.Bytes(), 0644)
@@ -315,9 +466,14 @@ func add_game_ports(args Args, cfg *MemConfig) (e error) {
 	found := false
 
 	tpath := filepath.Join(os.Getenv("JTFRAME"), "hdl", "inc", "ports.v")
-	t,e := template.New("ports.v").Funcs(funcMap).Funcs(sprig.FuncMap()).ParseFiles(tpath); if e!=nil { return e }
+	t, e := template.New("ports.v").Funcs(funcMap).Funcs(sprig.FuncMap()).ParseFiles(tpath)
+	if e != nil {
+		return e
+	}
 	var buffer bytes.Buffer
-	if e = t.Execute(&buffer, cfg); e!=nil { return e }
+	if e = t.Execute(&buffer, cfg); e != nil {
+		return e
+	}
 	outpath := "jt" + args.Core + "_game.v"
 	outpath = filepath.Join(os.Getenv("CORES"), args.Core, "hdl", outpath)
 	f, err := os.Open(outpath)
@@ -369,29 +525,60 @@ func add_game_ports(args Args, cfg *MemConfig) (e error) {
 	return nil
 }
 
-func make_dump2bin( corename string, cfg *MemConfig) (e error) {
-	if len(cfg.Ioctl.Buses )==0 { return }
+func make_dump2bin(corename string, cfg *MemConfig) (e error) {
+	if len(cfg.Ioctl.Buses) == 0 {
+		return
+	}
 	tpath := filepath.Join(os.Getenv("JTFRAME"), "src", "jtframe", "mem", "dump2bin.sh")
-	t, e := template.New("dump2bin.sh").Funcs(funcMap).Funcs(sprig.FuncMap()).ParseFiles(tpath); if e!=nil { return e }
+	t, e := template.New("dump2bin.sh").Funcs(funcMap).Funcs(sprig.FuncMap()).ParseFiles(tpath)
+	if e != nil {
+		return e
+	}
 	var buffer bytes.Buffer
-	if e = t.Execute(&buffer, cfg); e!=nil { return e }
+	if e = t.Execute(&buffer, cfg); e != nil {
+		return e
+	}
 	// Dump the file
 	outpath := filepath.Join(os.Getenv("CORES"), corename, "ver", "game")
 	os.MkdirAll(outpath, 0777) // derivative cores may not have a permanent hdl folder
-	outpath = filepath.Join( outpath, "dump2bin.sh")
-	e = ioutil.WriteFile(outpath, buffer.Bytes(), 0755); if e!=nil { return e }
+	outpath = filepath.Join(outpath, "dump2bin.sh")
+	e = ioutil.WriteFile(outpath, buffer.Bytes(), 0755)
+	if e != nil {
+		return e
+	}
 	if Verbose {
 		fmt.Printf("%s created\n", outpath)
 	}
 	return nil
 }
 
-func bankOffset( cfg *MemConfig, corename string) (e error) {
+func bankOffset(cfg *MemConfig, corename string) (e error) {
 	mra_cfg, e := mra.ParseTomlFile(corename)
-	if e!=nil { return e }
-	if len(mra_cfg.Header.Offset.Regions)==0 { return nil }
+	if e != nil {
+		return e
+	}
+	if len(mra_cfg.Header.Offset.Regions) == 0 {
+		return nil
+	}
 	cfg.Balut = 1
 	cfg.Lutsh = mra_cfg.Header.Offset.Bits
+	return nil
+}
+
+func (cfg *MemConfig) check_sdram() error {
+	if len(cfg.SDRAM.Banks) > 0 && len(cfg.SDRAM.Cache_lanes) > 0 {
+		return fmt.Errorf("jtframe mem: sdram.banks and sdram.cache-lanes cannot be defined at the same time")
+	}
+	if len(cfg.SDRAM.Banks) > 0 {
+		if cfg.SDRAM.Big_endian {
+			return fmt.Errorf("jtframe mem: sdram.big_endian is only valid with sdram.cache-lanes")
+		}
+		return cfg.check_banks()
+	}
+	if err := cfg.check_cache_lanes(); err != nil {
+		return err
+	}
+	cfg.mark_all_banks_unused()
 	return nil
 }
 
@@ -436,6 +623,9 @@ Set JTFRAME_HEADER in macros.def and define a [header.offset] in mame2mra.toml`)
 		}
 		total_ram := 0
 		for _, bus := range each.Buses {
+			if _, e := ResolveSimfileDataWidth("SDRAM bus", bus.Name, bus.Data_width, bus.Simfile.Data_type, bus.Simfile.Big_endian); e != nil {
+				return fmt.Errorf("jtframe mem: %w", e)
+			}
 			if bus.Rw {
 				total_ram++
 			}
@@ -474,6 +664,198 @@ Set JTFRAME_HEADER in macros.def and define a [header.offset] in mame2mra.toml`)
 	return nil
 }
 
+func (cfg *MemConfig) check_cache_lanes() error {
+	if len(cfg.SDRAM.Cache_lanes) == 0 || len(cfg.SDRAM.Cache_lanes) > 8 {
+		return fmt.Errorf("jtframe mem: the number of cache-lanes must be between 1 and 8 but %d were found", len(cfg.SDRAM.Cache_lanes))
+	}
+	param_values := make(map[string]string, len(cfg.Params))
+	for _, each := range cfg.Params {
+		if each.Value != "" {
+			param_values[each.Name] = each.Value
+		} else {
+			param_values[each.Name] = "`" + each.Name
+		}
+	}
+	old_macros := macros.CopyToMap()
+	defer macros.MakeFromMap(old_macros)
+	for name, value := range param_values {
+		macros.Set(name, value)
+	}
+	total_cache, max_cache_size, err := cfg.parse_cache_lanes(param_values)
+	if err != nil {
+		return err
+	}
+	if total_cache > 512*1024 {
+		return fmt.Errorf("jtframe mem: cache-lanes use %d bytes of BRAM, which must stay below 512kB", total_cache)
+	}
+	burst_len := max_cache_size
+	if cfg.SDRAM.Burst != "" {
+		var err error
+		burst_len, err = parse_memory_size(cfg.SDRAM.Burst)
+		if err != nil {
+			return fmt.Errorf("jtframe mem: invalid sdram.burst: %w", err)
+		}
+	} else {
+		cfg.SDRAM.Burst = format_memory_size(max_cache_size)
+	}
+	if burst_len&(burst_len-1) != 0 {
+		return fmt.Errorf("jtframe mem: burst size %d bytes is not an exact power of two", burst_len)
+	}
+	burst_limit := 512
+	if macros.IsSet("JTFRAME_SDRAM_LARGE") {
+		burst_limit = 1024
+	}
+	if burst_len > burst_limit {
+		return fmt.Errorf("jtframe mem: burst size %d bytes exceeds the %d-byte limit", burst_len, burst_limit)
+	}
+	cfg.SDRAM.Burst_len = burst_len
+	if Verbose {
+		cfg.report_cache_lanes(total_cache)
+	}
+	return nil
+}
+
+func (cfg *MemConfig) mark_all_banks_unused() {
+	for k := 0; k < 4; k++ {
+		cfg.Unused[k] = true
+	}
+}
+
+func ResolveSimfileDataWidth(kind, name string, data_width int, data_type string, big_endian bool) (int, error) {
+	switch data_width {
+	case 8, 16, 32, 64, 128:
+	default:
+		return 0, fmt.Errorf("%s %s uses unsupported data_width %d", kind, name, data_width)
+	}
+
+	data_type = strings.TrimSpace(strings.ToLower(data_type))
+	switch data_type {
+	case "":
+	case "u16":
+		return 16, nil
+	case "u32":
+		return 32, nil
+	default:
+		return 0, fmt.Errorf("%s %s uses unsupported simfile.data_type %q (use u16 or u32)", kind, name, data_type)
+	}
+
+	if !big_endian {
+		return data_width, nil
+	}
+	if data_width == 8 {
+		return 0, fmt.Errorf("%s %s cannot use simfile.big_endian with 8-bit data width", kind, name)
+	}
+	switch data_width {
+	case 16, 32:
+		return data_width, nil
+	default:
+		return 0, fmt.Errorf("%s %s uses data_width %d with simfile.big_endian; set simfile.data_type to u16 or u32", kind, name, data_width)
+	}
+}
+
+func (cfg *MemConfig) parse_cache_lanes(param_values map[string]string) (total_cache, max_cache_size int, err error) {
+	bank_size_bytes := cache_bank_size_bytes()
+	total_sdram_bytes := cache_total_sdram_bytes()
+	for k := range cfg.SDRAM.Cache_lanes {
+		line := &cfg.SDRAM.Cache_lanes[k]
+		line.Full_range = false
+		line.Span_bytes = 0
+		if line.Rw && k >= 4 {
+			return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s enables rw, but only the first four cache-lanes may use rw", line.Name)
+		}
+		if line.Blocks.Count == 0 {
+			return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s must define blocks.count and it cannot be zero", line.Name)
+		}
+		switch line.Data_width {
+		case 8, 16, 32, 64, 128:
+		default:
+			return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s uses unsupported data_width %d", line.Name, line.Data_width)
+		}
+		if _, e := ResolveSimfileDataWidth("cache-lane", line.Name, line.Data_width, line.Simfile.Data_type, line.Simfile.Big_endian); e != nil {
+			return 0, 0, fmt.Errorf("jtframe mem: %w", e)
+		}
+		if Verbose && cfg.SDRAM.Big_endian && line.Data_width != 32 {
+			fmt.Printf("WARNING: sdram.big_endian only applies to 32-bit cache-lanes; %s uses %d bits and will force little-endian packing\n",
+				line.Name, line.Data_width)
+		}
+		size_bytes, e := parse_memory_size(line.Blocks.Size)
+		if e != nil {
+			return 0, 0, fmt.Errorf("jtframe mem: invalid cache size for %s: %w", line.Name, e)
+		}
+		if size_bytes&(size_bytes-1) != 0 {
+			return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s uses a cache size of %d bytes, which is not an exact power of two", line.Name, size_bytes)
+		}
+		if size_bytes < 16 {
+			return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s uses a cache size of %d bytes, which must be at least 16", line.Name, size_bytes)
+		}
+		line.Blocks.Size_bytes = size_bytes
+		if size_bytes > max_cache_size {
+			max_cache_size = size_bytes
+		}
+		if cache_line_uses_banked_at(*line) {
+			length_bytes, e := parse_memory_size(line.At.Length)
+			if e != nil {
+				return 0, 0, fmt.Errorf("jtframe mem: invalid length for %s: %w", line.Name, e)
+			}
+			line.At.Length_bytes = length_bytes
+			line.Span_bytes = length_bytes
+			if line.At.Offset != "" && param_values[line.At.Offset] == "" {
+				if !strings.HasPrefix(line.At.Offset, "0x") && !strings.HasPrefix(line.At.Offset, "0X") {
+					return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s offset must match a parameter name or an explicit hexadecimal value", line.Name)
+				}
+				if _, e := strconv.ParseUint(line.At.Offset[2:], 16, 64); e != nil {
+					return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s offset must match a parameter name or an explicit hexadecimal value", line.Name)
+				}
+			}
+			offset_words, e := resolve_cache_lane_offset_words(line.At.Offset, param_values)
+			if e != nil {
+				return 0, 0, fmt.Errorf("jtframe mem: invalid offset for cache-lane %s: %w", line.Name, e)
+			}
+			offset_bytes := offset_words << 1
+			if offset_bytes+int64(length_bytes) > bank_size_bytes {
+				return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s exceeds bank %d size (%d bytes offset + %d bytes length > %d bytes)", line.Name, line.At.Bank, offset_bytes, length_bytes, bank_size_bytes)
+			}
+		} else {
+			line.At.Length_bytes = 0
+			line.Full_range = true
+			line.Span_bytes = total_sdram_bytes
+		}
+		line.Total = line.Blocks.Count * size_bytes
+		total_cache += line.Total
+	}
+	return total_cache, max_cache_size, nil
+}
+
+func resolve_cache_lane_offset_words(offset string, param_values map[string]string) (int64, error) {
+	if offset == "" {
+		return 0, nil
+	}
+	return macros.Eval(offset)
+}
+
+func (cfg *MemConfig) report_cache_lanes(total_cache int) {
+	fmt.Println("SDRAM cache lanes:")
+	fmt.Printf("%-12s %8s %8s %10s\n", "name", "blocks", "size", "total")
+	for _, line := range cfg.SDRAM.Cache_lanes {
+		fmt.Printf("%-12s %8d %8s %10s\n",
+			line.Name,
+			line.Blocks.Count,
+			format_memory_size(line.Blocks.Size_bytes),
+			format_memory_size(line.Total))
+	}
+	fmt.Printf("%-12s %8s %8s %10s\n", "TOTAL", "", "", format_memory_size(total_cache))
+}
+
+func format_memory_size(size_bytes int) string {
+	if size_bytes%(1024*1024) == 0 {
+		return fmt.Sprintf("%dMB", size_bytes/(1024*1024))
+	}
+	if size_bytes%1024 == 0 {
+		return fmt.Sprintf("%dkB", size_bytes/1024)
+	}
+	return fmt.Sprintf("%dB", size_bytes)
+}
+
 func report_bad_int(macro_name string) bool {
 	if !macros.IsInt(macro_name) {
 		fmt.Printf("Missing or invalid %s\n", macro_name)
@@ -486,9 +868,11 @@ func (cfg *MemConfig) check_bram() error {
 	prom_cnt := 0
 	for k, _ := range cfg.BRAM {
 		bram := &cfg.BRAM[k]
-		if !bram.Prom { continue }
-		if bram.Data_width>8 {
-			return fmt.Errorf("PROM BRAM blocks must be 8-bit wide or less but BRAM %s requires %d bits",bram.Name, bram.Data_width )
+		if !bram.Prom {
+			continue
+		}
+		if bram.Data_width > 8 {
+			return fmt.Errorf("PROM BRAM blocks must be 8-bit wide or less but BRAM %s requires %d bits", bram.Name, bram.Data_width)
 		}
 		if bram.Data_width > 8 {
 			return fmt.Errorf("PROM BRAM blocks must be 8-bit wide or less but BRAM %s requires %d bits", bram.Name, bram.Data_width)
@@ -617,9 +1001,8 @@ func fill_implicit_ports(cfg *MemConfig) {
 				name = each.We
 			}
 			we_port := Port{Name: name}
-			// only 16 bit memories have byte select
-			if each.Data_width == 16 {
-				we_port.MSB = 1
+			if width := each.Data_width >> 3; width > 1 {
+				we_port.MSB = width - 1
 			}
 			add(we_port)
 		}
@@ -646,7 +1029,7 @@ func fill_implicit_ports(cfg *MemConfig) {
 				if each.Dual_port.We != "" {
 					add(Port{
 						Name: each.Dual_port.We,
-						MSB:  each.Data_width >> 4, // 8->0, 16->1
+						MSB:  (each.Data_width >> 3) - 1,
 					})
 				}
 			} else {
@@ -692,7 +1075,7 @@ func make_ioctl(cfg *MemConfig) int {
 		if each == nil {
 			continue
 		}
-		each.Sim_file = true
+		each.Simfile.Enabled = true
 		if each.Ioctl.Order >= len(cfg.Ioctl.Buses) {
 			fmt.Printf("mem.yaml: too many IOCTL buses for BRAM\n")
 			os.Exit(1)
@@ -714,13 +1097,13 @@ func make_ioctl(cfg *MemConfig) int {
 		if ioinfo.DW == 8 {
 			ioinfo.We = "1'b0"
 		} else {
-			ioinfo.We = "2'b0"
+			ioinfo.We = fmt.Sprintf("%d'd0", ioinfo.DW>>3)
 		}
 		if each.Ioctl.Restore {
 			if each.Rw {
 				ioinfo.We = each.We
 				if each.We == "" {
-					ioinfo.We = "2'b0"
+					ioinfo.We = fmt.Sprintf("%d'd0", each.Data_width>>3)
 				}
 			}
 			each.We = each.Name + "_wemx"
@@ -780,7 +1163,7 @@ func check_ioctl_size(dump_size int) {
 
 const NOGFXRANGE = "0;"
 
-func fill_gfx_sort(cfg *MemConfig) {
+func (cfg *MemConfig) fill_gfx_sort() {
 	// this will not merge correctly hhvvv and hhvvvx used together, that's
 	// not supported in jtframe_dwnld at the moment
 	var b04, b08, b016, b016b, b016c int
@@ -813,7 +1196,7 @@ func (cfg *MemConfig) make_gfx_ranges(match string) (ranges []string, b0 int) {
 				continue
 			}
 			start_offset := make([]string, len(bank_start))
-			copy(start_offset,bank_start)
+			copy(start_offset, bank_start)
 			if each.Offset != "" {
 				start_offset = append(start_offset, fmt.Sprintf("(%s<<1)", each.Offset))
 			}
