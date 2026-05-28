@@ -497,6 +497,13 @@ jtframe_joymux #(.BUTTONS(BUTTONS)) u_joymux(
     // [MiSTer-DB9-Pro BEGIN] - Saturn key gate
     .saturn_unlocked ( saturn_unlocked ),
     // [MiSTer-DB9-Pro END]
+    // [MiSTer-DB9 BEGIN] - OSD-open autodetect FSM glue (joydb.sv)
+    //   OSD_STATUS is a top-level input on jtframe_mister.sv.
+    //   No SNAC / MT32-pi path on jt cores → bind 1'b0.
+    .OSD_STATUS          ( OSD_STATUS ),
+    .snac_active         ( 1'b0       ),
+    .mt32_primary_active ( 1'b0       ),
+    // [MiSTer-DB9 END]
 
     .joyusb_1   ( joyusb_1  ),
     .joyusb_2   ( joyusb_2  ),
