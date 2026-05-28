@@ -42,6 +42,15 @@ module jtframe_joymux(
     input             saturn_unlocked,
     // [MiSTer-DB9-Pro END]
 
+    // [MiSTer-DB9 BEGIN] - OSD-open autodetect FSM glue (joydb.sv)
+    //   OSD_STATUS routed from jtframe_mister.sv top-level input.
+    //   snac_active / mt32_primary_active: no SNAC path, no MT32-pi on jt
+    //   cores — parent binds 1'b0.
+    input             OSD_STATUS,
+    input             snac_active,
+    input             mt32_primary_active,
+    // [MiSTer-DB9 END]
+
     // USB joystick fallback (provided by hps_io)
     input      [15:0] joyusb_1,
     input      [15:0] joyusb_2,
@@ -77,6 +86,11 @@ joydb u_joydb (
     // [MiSTer-DB9-Pro BEGIN] - Saturn key gate
     .saturn_unlocked ( saturn_unlocked ),
     // [MiSTer-DB9-Pro END]
+    // [MiSTer-DB9 BEGIN] - OSD-open autodetect FSM glue
+    .OSD_STATUS          ( OSD_STATUS          ),
+    .snac_active         ( snac_active         ),
+    .mt32_primary_active ( mt32_primary_active ),
+    // [MiSTer-DB9 END]
     .USER_OUT_DRIVE  ( user_out_drive  ),
     .USER_PP_DRIVE   ( USER_PP         ),
     .USER_OSD        ( user_osd        ),
