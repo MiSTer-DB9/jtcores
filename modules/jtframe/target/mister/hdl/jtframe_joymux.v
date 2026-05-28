@@ -71,6 +71,7 @@ localparam COIN_BIT   = 7+(BUTTONS-2);
 
 wire [15:0] joydb_1, joydb_2;
 wire        joydb_1ena, joydb_2ena;
+wire        pad_1_6btn, pad_2_6btn;
 wire [ 7:0] user_out_drive;
 wire        user_osd;
 
@@ -98,6 +99,10 @@ joydb u_joydb (
     .joydb_2         ( joydb_2         ),
     .joydb_1ena      ( joydb_1ena      ),
     .joydb_2ena      ( joydb_2ena      ),
+    // [MiSTer-DB9 BEGIN] - per-player 6-btn detect for SF2 row swap
+    .pad_1_6btn      ( pad_1_6btn      ),
+    .pad_2_6btn      ( pad_2_6btn      ),
+    // [MiSTer-DB9 END]
     .joy_raw         ( joy_raw         )
 );
 
@@ -128,9 +133,35 @@ function [15:0] assign_joy(
     end
 endfunction
 
+// [MiSTer-DB9 BEGIN] - Sega 6-button row swap for fighter convention
+// On 6-button DB9MD / Saturn pads the physical layout is two rows:
+//   top    = X Y Z   (joydb bits [9:7])
+//   bottom = A B C   (joydb bits [6:4])
+// Capcom arcade convention (and Sega's own SF2:CE) puts punches on the top
+// row and kicks on the bottom row:
+//   joystick[4..6] = LP MP HP   (button 1..3)
+//   joystick[7..9] = LK MK HK   (button 4..6)
+// Swap the two triples so jt cores see XYZ -> LP/MP/HP and ABC -> LK/MK/HK.
+// Active only when BUTTONS == 6 and the pad is 6-btn-shaped (pad_*_6btn,
+// driven by joydb.sv). A 3-btn MD pad must NOT swap or A/B/C land past
+// the game's used buttons in 2-3 button cores (jtcps1 ffight/captcomm/
+// ghouls/wof). joydb sources pad_*_6btn from the protocol-level handshake
+// in joydb9md (Saturn is always 6-btn-shaped, DB15 has no row geometry
+// and reports 0). Fixes MiSTer-DB9/Issues#47.
+wire swap_p1 = (BUTTONS == 6) && pad_1_6btn;
+wire swap_p2 = (BUTTONS == 6) && pad_2_6btn;
+
+wire [15:0] joydb_1_remap = swap_p1
+    ? { joydb_1[15:10], joydb_1[6:4], joydb_1[9:7], joydb_1[3:0] }
+    : joydb_1;
+wire [15:0] joydb_2_remap = swap_p2
+    ? { joydb_2[15:10], joydb_2[6:4], joydb_2[9:7], joydb_2[3:0] }
+    : joydb_2;
+// [MiSTer-DB9 END]
+
 always @(posedge clk) begin
-    joymux_1 <= assign_joy( joydb_1ena, joydb_1, joyusb_1 );
-    joymux_2 <= assign_joy( joydb_2ena, joydb_2, joyusb_2 );
+    joymux_1 <= assign_joy( joydb_1ena, joydb_1_remap, joyusb_1 );
+    joymux_2 <= assign_joy( joydb_2ena, joydb_2_remap, joyusb_2 );
 end
 
 endmodule
