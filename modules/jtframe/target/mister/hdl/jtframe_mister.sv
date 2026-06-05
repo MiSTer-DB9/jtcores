@@ -27,6 +27,12 @@ module jtframe_mister #(parameter
     input           clk_sys,
     input           clk_rom,
     input           clk_pico,
+    // [MiSTer-DB9 BEGIN] - DB9/SNAC8: dedicated 50MHz clock for the joydb wrapper
+    //   (octopod DB9MD/Saturn 2P-mux + protocol timing). Bound to CLK_50M so joydb
+    //   runs at a fixed rate independent of the per-core clk_sys (24/48/96MHz),
+    //   matching every other fork core's CLK_JOY=CLK_50M convention.
+    input           clk_joy,
+    // [MiSTer-DB9 END]
     input           pll_locked,
     // interface with microcontroller
     output [63:0]   status,
@@ -321,8 +327,12 @@ assign {FB_PAL_CLK, FB_FORCE_BLANK, FB_PAL_ADDR, FB_PAL_DOUT, FB_PAL_WR} = '0;
 // If JTFRAME_CHEAT is not defined, the cheat side is disabled
 // Otherwise, both can listen and talk
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_OUT mux switched from db15_en to joy_any_en (joymux drives all DB modes)
-always @(posedge clk_sys) begin
-    USER_OUT <= joy_any_en ? joy_out :
+// Combinational relay (was always @(posedge clk_sys)). joydb runs on clk_joy
+// (CLK_50M); a clk_sys-registered USER_OUT re-samples joySplit/JOY_MDSEL across a
+// CLK_50M->clk_sys CDC and skews USER_IO[4] (octopod 2P-MUX SEL) vs USER_IO[0]
+// (TH/SELECT), breaking the 2P-MD demux. Mirrors MegaDrive.sv always_comb USER_OUT.
+always @(*) begin
+    USER_OUT = joy_any_en ? joy_out :
         uart_en ? {~7'h0, uart_tx&game_tx } :
         8'hff;
 end
@@ -483,7 +493,14 @@ wire       joy_any_en   = |joy_type;
 // [MiSTer-DB9 END]
 jtframe_joymux #(.BUTTONS(BUTTONS)) u_joymux(
     .rst        ( rst       ),
-    .clk        ( clk_sys   ),
+    // [MiSTer-DB9 BEGIN] - joydb on fixed CLK_50M (clk_joy), not per-core clk_sys.
+    //   Matches every other fork core (Genesis/MegaDrive/SMS/NES wire CLK_JOY to
+    //   CLK_50M and clock joydb from it) so joydb runs at one fixed 40-50 MHz rate
+    //   fleet-wide, independent of the per-core clk_sys (24/48/96 MHz). The
+    //   joydb->core-clock CDC this implies is the proven pattern on the whole
+    //   non-jt fleet; CLK_50M (FPGA_CLK2_50) is async-grouped vs the PLL in sys.sdc.
+    .clk        ( clk_joy   ),
+    // [MiSTer-DB9 END]
     .show_osd   ( show_osd  ),
 
     // MiSTer pins (8-bit USER_IO)
