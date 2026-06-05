@@ -408,6 +408,9 @@ u_frame(
     .clk_sys        ( clk_sys        ),
     .clk_rom        ( clk_rom        ),
     .clk_pico       ( clk_pico       ),
+    // [MiSTer-DB9 BEGIN] - fixed CLK_50M for joydb (octopod 2P-mux/protocol timing)
+    .clk_joy        ( CLK_50M        ),
+    // [MiSTer-DB9 END]
     .pll_locked     ( pll_locked     ),
     // interface with microcontroller
     .status         ( status         ),
