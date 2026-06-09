@@ -1,6 +1,6 @@
 // [MiSTer-DB9-Pro BEGIN] - SipHash-2-4, fixed 32-byte input
 // Aumasson + Bernstein 2012, https://www.aumasson.jp/siphash/
-// Companion of Main_MiSTer/siphash24.{c,h} and the signing tooling;
+// Companion of Main_MiSTer/siphash24.{c,h} and the host-side key signer;
 // all three produce identical 8-byte tags for identical inputs.
 //
 // SIPROUND is split into two cycles (sip_phase 0/1) to break the back-to-back
