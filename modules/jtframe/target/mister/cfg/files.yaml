@@ -14,6 +14,7 @@ jtframe/target/mister:
     # [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn baseline files
     - joydb9md.v
     - joydb9saturn.v
+    - joydb_remap.sv
     - joydb.sv
     # [MiSTer-DB9 END]
   - when: [ JTFRAME_SAVEGAME ]
