@@ -481,6 +481,13 @@ jtframe_mister_dwnld u_dwnld(
 wire [7:0] hps_din;
 wire [15:0] joyusb_1, joyusb_2;
 
+// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD)
+//   Driven by hps_io, consumed by the joydb_remap matrix inside jtframe_joymux.
+wire        db9_remap_cmd;
+wire [5:0]  db9_remap_byte_cnt;
+wire [15:0] db9_remap_din;
+// [MiSTer-DB9 END]
+
 
 `ifndef JTFRAME_NO_DB15
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: status_full[127:126] = joy_type, status_full[125] = joy_2p
@@ -522,6 +529,14 @@ jtframe_joymux #(.BUTTONS(BUTTONS)) u_joymux(
     .mt32_primary_active ( 1'b0       ),
     // [MiSTer-DB9 END]
 
+    // [MiSTer-DB9 BEGIN] - programmable-remap matrix glue
+    //   clk_sys = clk_rom is the HPS-bus clock (same net hps_io.clk_sys uses);
+    //   joydb itself stays on clk_joy, only the selector load runs on clk_sys.
+    .clk_sys            ( clk_rom            ),
+    .db9_remap_cmd      ( db9_remap_cmd      ),
+    .db9_remap_byte_cnt ( db9_remap_byte_cnt ),
+    .db9_remap_din      ( db9_remap_din      ),
+    // [MiSTer-DB9 END]
     .joyusb_1   ( joyusb_1  ),
     .joyusb_2   ( joyusb_2  ),
     .joymux_1   ( joystick1 ),
@@ -569,6 +584,11 @@ hps_io #(
     // [MiSTer-DB9-Pro BEGIN] - Saturn key gate v1.5 output
     .saturn_unlocked ( saturn_unlocked ),
     // [MiSTer-DB9-Pro END]
+    // [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD)
+    .db9_remap_cmd      ( db9_remap_cmd      ),
+    .db9_remap_byte_cnt ( db9_remap_byte_cnt ),
+    .db9_remap_din      ( db9_remap_din      ),
+    // [MiSTer-DB9 END]
     .buttons         ( buttons        ),
     // [MiSTer-DB9 BEGIN] - DB9/SNAC8 + Saturn: capture full 128b status; expose lower 64b to upstream via `assign status`
     .status          ( status_full    ),

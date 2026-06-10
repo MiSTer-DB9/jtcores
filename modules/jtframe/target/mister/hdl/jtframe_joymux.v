@@ -27,6 +27,9 @@
 module jtframe_joymux(
     input             rst,
     input             clk,
+    // [MiSTer-DB9 BEGIN] - HPS-bus clock for the programmable-remap selector load
+    input             clk_sys,
+    // [MiSTer-DB9 END]
     output            show_osd,
 
     // MiSTer pins (USER_IO 7→8 widening, [MiSTer-DB9])
@@ -49,6 +52,12 @@ module jtframe_joymux(
     input             OSD_STATUS,
     input             snac_active,
     input             mt32_primary_active,
+    // [MiSTer-DB9 END]
+
+    // [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD, from hps_io)
+    input             db9_remap_cmd,
+    input      [ 5:0] db9_remap_byte_cnt,
+    input      [15:0] db9_remap_din,
     // [MiSTer-DB9 END]
 
     // USB joystick fallback (provided by hps_io)
@@ -74,6 +83,9 @@ wire        joydb_1ena, joydb_2ena;
 wire        pad_1_6btn, pad_2_6btn;
 wire [ 7:0] user_out_drive;
 wire        user_osd;
+// [MiSTer-DB9 BEGIN] - programmable-remap matrix outputs (joydb_remap inside joydb)
+wire [15:0] joydb_1_mapped, joydb_2_mapped;
+// [MiSTer-DB9 END]
 
 // Mode decode (kept local for the assign_joy mux below)
 wire joy_any_en = |joy_type;
@@ -81,6 +93,14 @@ wire joy_any_en = |joy_type;
 // Unified DB9MD / DB15 / Saturn wrapper
 joydb u_joydb (
     .clk             ( clk             ),
+    // [MiSTer-DB9 BEGIN] - remap matrix: selector load on HPS-bus clk_sys, 0xFD stream
+    .clk_sys         ( clk_sys             ),
+    .remap_cmd       ( db9_remap_cmd       ),
+    .remap_byte_cnt  ( db9_remap_byte_cnt  ),
+    .remap_din       ( db9_remap_din       ),
+    .joydb_1_mapped  ( joydb_1_mapped      ),
+    .joydb_2_mapped  ( joydb_2_mapped      ),
+    // [MiSTer-DB9 END]
     .USER_IN         ( USER_IN         ),
     .joy_type        ( joy_type        ),
     .joy_2p          ( joy_2p          ),
@@ -125,9 +145,16 @@ function [15:0] assign_joy(
 );
     if( ena ) begin
         assign_joy = 0;
+        // [MiSTer-DB9 BEGIN] - matrix output is J1-position-indexed = jt layout, so
+        // pull start/coin from their jt bit positions (was joydb[10]/[11], the fixed
+        // physical Start/Mode). Identical at factory default for every BUTTONS count
+        // (derive places Start->raw10 at slot START_BIT, Coin->raw11 at COIN_BIT) and
+        // now honours a user remap of Start/Coin. Pause and higher J1 entries stay
+        // uncopied -> zeroed -> DB9-unreachable, exactly as before.
         assign_joy[BUTTONS+3:0] = joydb[BUTTONS+3:0];
-        assign_joy[COIN_BIT]    = joydb[11]; // select / mode / R-trigger
-        assign_joy[START_BIT]   = joydb[10]; // start
+        assign_joy[COIN_BIT]    = joydb[COIN_BIT];  // select / mode / R-trigger
+        assign_joy[START_BIT]   = joydb[START_BIT]; // start
+        // [MiSTer-DB9 END]
     end else begin
         assign_joy = joyusb;
     end
@@ -151,12 +178,16 @@ endfunction
 wire swap_p1 = (BUTTONS == 6) && pad_1_6btn;
 wire swap_p2 = (BUTTONS == 6) && pad_2_6btn;
 
+// Layer B: consume the programmable-remap matrix output (joydb_*_mapped) instead
+// of the raw joydb_*. At factory default the derive reproduces the joydb identity
+// order (A=4..Z=9, Start=10, Mode/Coin=11) so the 6-btn fighter row swap below and
+// assign_joy stay bit-for-bit unchanged; user remaps now flow through.
 wire [15:0] joydb_1_remap = swap_p1
-    ? { joydb_1[15:10], joydb_1[6:4], joydb_1[9:7], joydb_1[3:0] }
-    : joydb_1;
+    ? { joydb_1_mapped[15:10], joydb_1_mapped[6:4], joydb_1_mapped[9:7], joydb_1_mapped[3:0] }
+    : joydb_1_mapped;
 wire [15:0] joydb_2_remap = swap_p2
-    ? { joydb_2[15:10], joydb_2[6:4], joydb_2[9:7], joydb_2[3:0] }
-    : joydb_2;
+    ? { joydb_2_mapped[15:10], joydb_2_mapped[6:4], joydb_2_mapped[9:7], joydb_2_mapped[3:0] }
+    : joydb_2_mapped;
 // [MiSTer-DB9 END]
 
 always @(posedge clk) begin

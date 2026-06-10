@@ -38,6 +38,11 @@ module hps_io #(parameter CONF_STR="", CONF_STR_BRAM=1, PS2DIV=0, WIDE=0, VDNUM=
 	// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (per-customer SipHash MAC; UIO_DB9_KEY 0xFE)
 	output            saturn_unlocked,
 	// [MiSTer-DB9-Pro END]
+	// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD)
+	output            db9_remap_cmd,
+	output      [5:0] db9_remap_byte_cnt,
+	output     [15:0] db9_remap_din,
+	// [MiSTer-DB9 END]
 	output reg [31:0] joystick_0,
 	output reg [31:0] joystick_1,
 	output reg [31:0] joystick_2,
@@ -726,6 +731,15 @@ db9_key_gate #(
 	.saturn_unlocked (saturn_unlocked)
 );
 // [MiSTer-DB9-Pro END]
+
+// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD)
+// `cmd` lives inside the `uio_block` named always block (same as the key gate
+// above), so reach it via SystemVerilog hierarchical name; `byte_cnt`/`io_din`
+// are module-scope. Pure combinational taps - the matrix latches them itself.
+assign db9_remap_cmd      = (uio_block.cmd == 16'hFD);
+assign db9_remap_byte_cnt = byte_cnt[5:0];
+assign db9_remap_din      = io_din;
+// [MiSTer-DB9 END]
 
 endmodule
 
