@@ -54,6 +54,12 @@ module jtframe_cache_ctrl #(parameter
     input                   wr,
     input      [MW-1:0]     wdsn,
     output reg              ok,
+    input                   flush,
+    output reg              flushing,
+    output reg              flush_done,
+    input                   invalidate,
+    output reg              invalidating,
+    output reg              invalidate_done,
 
     output     [EW-1:1]     ext_addr,
     input      [15:0]       ext_din,
@@ -87,6 +93,11 @@ module jtframe_cache_ctrl #(parameter
     output reg              tag_advance_en,
     output reg [SETW-1:0]   tag_advance_set_n,
     output reg [WAYW-1:0]   tag_advance_way_n,
+    output     [WAYW-1:0]   tag_scan_way,
+    input                   scan_valid_now,
+    input                   scan_dirty_now,
+    input      [TAGW-1:0]   scan_tag_now,
+    input      [BW-1:0]     scan_blk_now,
     input                   hit_now,
     input      [WAYW-1:0]   hit_way_now,
     input      [BW-1:0]     hit_blk_now,
@@ -114,6 +125,7 @@ localparam integer STREAM_AW0    = DW == 8 ? 1 : AW0;
 
 localparam [WW-1:0] LAST_WORD = WW'(WORDS-1);
 localparam [SETW-1:0] LAST_SET = SETW'(SETS-1);
+localparam [WAYW-1:0] LAST_WAY = WAYW'(WAYS-1);
 
 localparam [4:0] S_INIT_CLEAR    = 5'd0,
                  S_IDLE          = 5'd1,
@@ -128,19 +140,29 @@ localparam [4:0] S_INIT_CLEAR    = 5'd0,
                  S_FILL_STREAM   = 5'd10,
                  S_POSTFILL_WAIT = 5'd11,
                  S_FILL_WB_WAIT  = 5'd12,
-                 S_FILL_WB_PRIME = 5'd13;
+                 S_FILL_WB_PRIME = 5'd13,
+                 S_FLUSH_WAIT    = 5'd14,
+                 S_FLUSH_CHECK   = 5'd15,
+                 S_FLUSH_ADVANCE = 5'd16,
+                 S_INVAL_CLEAR   = 5'd17,
+                 S_LOOKUP_DECIDE = 5'd18,
+                 S_WB_LOAD       = 5'd19;
 
 reg              fill_after_wb, fill_wb_prime_wait;
-reg              init_req_pending;
-reg              rd_l, wr_l;
 reg              req_wr_l;
+reg              flush_rd_resp_l;
+reg              req_take, flush_take, invalidate_take;
 reg [AW-1:AW0]   req_addr_l;
 reg [TAGW-1:0]   req_tag_l;
 reg [SETW-1:0]   req_set_l;
+reg [SETW-1:0]   flush_set_l;
 reg [DW-1:0]     req_din_l;
 reg [MW-1:0]     req_wdsn_l;
 reg [WAYW-1:0]   way_l;
+reg [WAYW-1:0]   flush_way_l;
 reg [TAGW-1:0]   victim_tag_l;
+reg [BW-1:0]     flush_rd_blk_l;
+reg [OFFW-1:0]   flush_rd_off_l;
 
 reg              req_load_addr, stream_load_addr;
 reg [RAM_BYTEW-1:0] req_addr_n, stream_addr_n;
@@ -148,27 +170,37 @@ reg [RAM_BYTEW-1:0] req_addr_n, stream_addr_n;
 real             ext_total_read_kb;
 `endif
 
-wire            rd_rise = rd & ~rd_l;
-wire            wr_rise = wr & ~wr_l;
-wire            new_rd  = rd_rise;
-wire            new_wr  = wr_rise & ~rd_rise;
-wire            new_req = new_rd | new_wr;
+wire            req_valid, req_pending, req_wr;
+wire            flush_start, invalidate_start, block_normal_req;
+wire            req_cache_init_busy = st == S_INIT_CLEAR;
+wire            flush_rd_pending, flush_rd_lookup, flush_rd_resp;
+wire            flush_rd_can_lookup = flushing & flush_rd_pending &
+                                      (st == S_WB_PRIME ||
+                                       st == S_WB_REQ ||
+                                       st == S_WB_STREAM ||
+                                       st == S_WB_GAP);
+wire            flush_rd_hit = hit_now;
 wire            fill_stream_dok = ext_dok;
-
-wire [UW-1:0]   req_uaddr_now = addr;
-wire [TAGW-1:0] req_tag_now   = addr_tag(req_uaddr_now);
-wire [SETW-1:0] req_set_now   = addr_set(req_uaddr_now);
-wire [OFFW-1:0] req_off_now   = req_uaddr_now[OFFW-1:0];
+wire [AW-1:AW0] front_req_addr;
+wire [TAGW-1:0] front_req_tag;
+wire [SETW-1:0] front_req_set;
+wire [OFFW-1:0] front_req_off, flush_rd_off;
+wire [DW-1:0]   front_req_din;
+wire [MW-1:0]   front_req_wdsn;
+wire [TAGW-1:0] flush_rd_tag;
+wire [SETW-1:0] flush_rd_set;
 wire [RAM_BYTEW-1:0] req_wr_addr     = req_baddr(blk_l, req_off_l);
 wire [RAM_BYTEW-1:0] stream_wr_addr  = stream_baddr(blk_l, stream_word);
+wire [SETW-1:0] wb_set_l = flushing ? flush_set_l : req_set_l;
 
 wire [AW-1:0]   fill_base_byte   = { line_base_uaddr(req_tag_l, req_set_l),    {AW0{1'b0}} };
-wire [AW-1:0]   victim_base_byte = { line_base_uaddr(victim_tag_l, req_set_l), {AW0{1'b0}} };
+wire [AW-1:0]   victim_base_byte = { line_base_uaddr(victim_tag_l, wb_set_l),  {AW0{1'b0}} };
 wire [AW-1:0]   ext_base_byte    = st==S_WB_REQ || st==S_WB_STREAM ?
                                    victim_base_byte : fill_base_byte;
 wire [WW-1:0]   wb_half_idx      = DW >= 32 && st == S_WB_STREAM && stream_word != LAST_WORD ?
                                    stream_word + WW'(1) : stream_word;
 wire [127:0]    rd_resp_word     = pack_data(req_q, req_off_l);
+wire [127:0]    flush_rd_resp_word = pack_data(req_q, flush_rd_off_l);
 
 assign miss_busy = st != S_IDLE;
 assign fill_done = fill_tail_seen;
@@ -177,9 +209,14 @@ assign req_addr  = |req_we ? req_wr_addr :
                    req_load_addr ? req_addr_n : req_ram_addr_l;
 assign stream_addr = |stream_we ? stream_wr_addr :
                      stream_load_addr ? stream_addr_n : stream_ram_addr_l;
-assign tag_rd_set = st == S_IDLE && new_req ? req_set_now : req_set_l;
-assign lookup_set = req_set_l;
-assign lookup_tag = req_tag_l;
+assign tag_rd_set = st == S_IDLE && req_valid ? front_req_set :
+                    flush_rd_can_lookup ? flush_rd_set :
+                    st == S_IDLE && flush_start ? {SETW{1'b0}} :
+                    flushing ? flush_set_l : req_set_l;
+assign lookup_set = flush_rd_lookup ? flush_rd_set :
+                    flushing ? flush_set_l : req_set_l;
+assign lookup_tag = flush_rd_lookup ? flush_rd_tag : req_tag_l;
+assign tag_scan_way = flush_way_l;
 
 assign ext_addr = { {(EW-AW){1'b0}}, ext_base_byte[AW-1:1] };
 assign ext_dout = wb_ext_word(wb_q, wb_half_idx);
@@ -189,26 +226,54 @@ assign ext_rd   = st==S_FILL_REQ ||
                   (st==S_FILL_STREAM && stream_word != LAST_WORD);
 assign ext_wr   = st==S_WB_REQ || (st==S_WB_STREAM && stream_word != LAST_WORD);
 
-function automatic [SETW-1:0] addr_set(input [UW-1:0] uaddr);
-    reg [UW-1:0] shifted;
-    begin
-        if( SET_BITS == 0 ) begin
-            addr_set = {SETW{1'b0}};
-        end else begin
-            shifted  = uaddr >> OFFW;
-            addr_set = SETW'(shifted);
-        end
-    end
-endfunction
-
-function automatic [TAGW-1:0] addr_tag(input [UW-1:0] uaddr);
-    begin
-        if( TAG_BITS == 0 )
-            addr_tag = {TAGW{1'b0}};
-        else
-            addr_tag = TAGW'(uaddr >> (OFFW + SET_BITS));
-    end
-endfunction
+jtframe_cache_req #(
+    .AW       ( AW       ),
+    .DW       ( DW       ),
+    .AW0      ( AW0      ),
+    .MW       ( MW       ),
+    .SET_BITS ( SET_BITS ),
+    .TAG_BITS ( TAG_BITS ),
+    .OFFW     ( OFFW     ),
+    .SETW     ( SETW     ),
+    .TAGW     ( TAGW     ),
+    .UW       ( UW       )
+) u_req (
+    .rst                 ( rst                    ),
+    .clk                 ( clk                    ),
+    .addr                ( addr                   ),
+    .din                 ( din                    ),
+    .rd                  ( rd                     ),
+    .wr                  ( wr                     ),
+    .wdsn                ( wdsn                   ),
+    .flush               ( flush                  ),
+    .flushing            ( flushing               ),
+    .flush_start         ( flush_start            ),
+    .flush_take          ( flush_take             ),
+    .invalidate          ( invalidate             ),
+    .invalidating        ( invalidating           ),
+    .invalidate_start    ( invalidate_start       ),
+    .invalidate_take     ( invalidate_take        ),
+    .cache_init_busy     ( req_cache_init_busy    ),
+    .block_normal_req    ( block_normal_req       ),
+    .req_valid           ( req_valid              ),
+    .req_pending         ( req_pending            ),
+    .req_take            ( req_take               ),
+    .req_wr              ( req_wr                 ),
+    .req_addr            ( front_req_addr         ),
+    .req_tag             ( front_req_tag          ),
+    .req_set             ( front_req_set          ),
+    .req_off             ( front_req_off          ),
+    .req_din             ( front_req_din          ),
+    .req_wdsn            ( front_req_wdsn         ),
+    .flush_rd_pending    ( flush_rd_pending       ),
+    .flush_rd_lookup     ( flush_rd_lookup        ),
+    .flush_rd_resp       ( flush_rd_resp          ),
+    .flush_rd_tag        ( flush_rd_tag           ),
+    .flush_rd_set        ( flush_rd_set           ),
+    .flush_rd_off        ( flush_rd_off           ),
+    .flush_rd_can_lookup ( flush_rd_can_lookup    ),
+    .flush_rd_hit        ( flush_rd_hit           )
+);
 
 function automatic [UW-1:0] line_base_uaddr(
     input [TAGW-1:0] tag,
@@ -368,6 +433,9 @@ initial begin
 end
 
 always @* begin
+    req_take          = 1'b0;
+    flush_take        = 1'b0;
+    invalidate_take   = 1'b0;
     req_load_addr      = 1'b0;
     req_we             = 16'd0;
     req_wdata          = 128'd0;
@@ -390,9 +458,13 @@ always @* begin
         S_INIT_CLEAR: begin
             tag_clear_en = 1'b1;
         end
+        S_INVAL_CLEAR: begin
+            tag_clear_en = 1'b1;
+        end
         S_LOOKUP: begin
             if( !hit_now ) begin
-                tag_advance_en = 1'b1;
+                tag_advance_en    = 1'b1;
+                tag_advance_way_n = victim_way_now;
             end
             if( hit_now && !req_wr_l ) begin
                 req_load_addr = 1'b1;
@@ -401,6 +473,10 @@ always @* begin
                 stream_load_addr = 1'b1;
                 stream_addr_n    = stream_baddr(victim_blk_now, {WW{1'b0}});
             end
+        end
+        S_WB_LOAD: begin
+            stream_load_addr = 1'b1;
+            stream_addr_n    = stream_baddr(blk_l, {WW{1'b0}});
         end
         S_WB_PRIME: begin
             if( DW >= 32 ) begin
@@ -435,6 +511,18 @@ always @* begin
                     stream_addr_n    = stream_baddr(blk_l, stream_word + WW'(3));
                 end
             end
+        end
+        S_WB_GAP: begin
+            if( flushing ) begin
+                tag_update_en      = 1'b1;
+                tag_write_set_n    = flush_set_l;
+                tag_update_way_n   = flush_way_l;
+                tag_update_valid_n = 1'b1;
+                tag_update_dirty_n = 1'b0;
+                tag_update_tag_n   = victim_tag_l;
+            end
+        end
+        S_FLUSH_CHECK: begin
         end
         S_FILL_WB_PRIME: begin
             if( !fill_wb_prime_wait ) begin
@@ -478,6 +566,16 @@ always @* begin
         default: begin
         end
     endcase
+    if( flush_rd_resp ) begin
+        req_load_addr = 1'b1;
+        req_addr_n    = req_baddr(flush_rd_blk_l, flush_rd_off_l);
+    end
+    if( st == S_IDLE && (req_pending || req_valid) )
+        req_take = 1'b1;
+    if( st == S_IDLE && !req_pending && !req_valid && flush_start )
+        flush_take = 1'b1;
+    if( st == S_IDLE && !req_pending && !req_valid && !flush_start && invalidate_start )
+        invalidate_take = 1'b1;
 end
 
 always @(posedge clk) begin
@@ -486,40 +584,46 @@ always @(posedge clk) begin
         fill_tail_seen    <= 1'b0;
         fill_after_wb     <= 1'b0;
         fill_wb_prime_wait<= 1'b0;
-        init_req_pending  <= 1'b0;
-        rd_l              <= 1'b0;
-        wr_l              <= 1'b0;
         req_wr_l          <= 1'b0;
+        flush_rd_resp_l   <= 1'b0;
         req_addr_l        <= {AW-AW0{1'b0}};
         req_tag_l         <= {TAGW{1'b0}};
         req_set_l         <= {SETW{1'b0}};
+        flush_set_l       <= {SETW{1'b0}};
         req_off_l         <= {OFFW{1'b0}};
         req_din_l         <= {DW{1'b0}};
         req_wdsn_l        <= {MW{1'b1}};
         blk_l             <= {BW{1'b0}};
         way_l             <= {WAYW{1'b0}};
+        flush_way_l       <= {WAYW{1'b0}};
         clr_set           <= {SETW{1'b0}};
         victim_tag_l      <= {TAGW{1'b0}};
+        flush_rd_blk_l    <= {BW{1'b0}};
+        flush_rd_off_l    <= {OFFW{1'b0}};
         stream_word       <= {WW{1'b0}};
         wb_q              <= 128'd0;
         req_ram_addr_l    <= {RAM_BYTEW{1'b0}};
         stream_ram_addr_l <= {RAM_BYTEW{1'b0}};
         dout              <= {DW{1'b0}};
         ok                <= 1'b0;
+        flushing          <= 1'b0;
+        flush_done        <= 1'b0;
+        invalidating      <= 1'b0;
+        invalidate_done   <= 1'b0;
 `ifdef SIMULATION
         ext_total_read_kb = 0.0;
 `endif
     end else begin
         if( req_load_addr )    req_ram_addr_l    <= req_addr_n;
         if( stream_load_addr ) stream_ram_addr_l <= stream_addr_n;
-
-        // Keep edge tracking low while tag RAMs are being cleared so a
-        // requester that raises rd/wr during init still triggers once ready.
-        if( st != S_INIT_CLEAR ) begin
-            rd_l <= rd;
-            wr_l <= wr;
+        flush_rd_resp_l <= flush_rd_resp;
+        if( flush_rd_lookup && hit_now ) begin
+            flush_rd_blk_l <= hit_blk_now;
+            flush_rd_off_l <= flush_rd_off;
         end
         ok <= 1'b0;
+        flush_done <= 1'b0;
+        invalidate_done <= 1'b0;
 `ifdef SIMULATION
         if( st == S_FILL_REQ && ext_ack )
             ext_total_read_kb = ext_total_read_kb + (BLKSIZE / 1024.0);
@@ -527,16 +631,6 @@ always @(posedge clk) begin
 
         case( st )
             S_INIT_CLEAR: begin
-                if( new_req && !init_req_pending ) begin
-                    init_req_pending <= 1'b1;
-                    req_wr_l         <= new_wr;
-                    req_addr_l       <= addr;
-                    req_tag_l        <= req_tag_now;
-                    req_set_l        <= req_set_now;
-                    req_off_l        <= req_off_now;
-                    req_din_l        <= din;
-                    req_wdsn_l       <= wdsn;
-                end
                 if( clr_set == LAST_SET ) begin
                     st <= S_IDLE;
                 end else begin
@@ -544,36 +638,46 @@ always @(posedge clk) begin
                 end
             end
             S_IDLE: begin
-                if( init_req_pending ) begin
-                    init_req_pending <= 1'b0;
+                if( req_valid ) begin
                     fill_after_wb    <= 1'b0;
+                    req_wr_l         <= req_wr;
+                    req_addr_l       <= front_req_addr;
+                    req_tag_l        <= front_req_tag;
+                    req_set_l        <= front_req_set;
+                    req_off_l        <= front_req_off;
+                    req_din_l        <= front_req_din;
+                    req_wdsn_l       <= front_req_wdsn;
                     st               <= S_LOOKUP;
-                end else if( new_req ) begin
-                    fill_after_wb <= 1'b0;
-                    req_wr_l      <= new_wr;
-                    req_addr_l    <= addr;
-                    req_tag_l     <= req_tag_now;
-                    req_set_l     <= req_set_now;
-                    req_off_l     <= req_off_now;
-                    req_din_l     <= din;
-                    req_wdsn_l    <= wdsn;
-                    st            <= S_LOOKUP;
+                end else if( flush_start ) begin
+                    flushing       <= 1'b1;
+                    fill_after_wb  <= 1'b0;
+                    flush_set_l    <= {SETW{1'b0}};
+                    flush_way_l    <= {WAYW{1'b0}};
+                    st             <= S_FLUSH_CHECK;
+                end else if( invalidate_start ) begin
+                    invalidating       <= 1'b1;
+                    clr_set            <= {SETW{1'b0}};
+                    st                 <= S_INVAL_CLEAR;
                 end
             end
             S_LOOKUP: begin
                 if( hit_now ) begin
                     blk_l <= hit_blk_now;
                     way_l <= hit_way_now;
-                    if( req_wr_l ) st <= S_WR_COMMIT;
-                    else           st <= S_RD_RESP;
+                    if( req_wr_l )
+                        st <= S_WR_COMMIT;
+                    else
+                        st <= S_RD_RESP;
                 end else begin
                     blk_l          <= victim_blk_now;
                     way_l          <= victim_way_now;
                     victim_tag_l   <= victim_tag_now;
                     stream_word    <= {WW{1'b0}};
                     fill_tail_seen <= 1'b0;
-                    if( victim_dirty_now ) st <= S_WB_PRIME;
-                    else                   st <= S_FILL_REQ;
+                    if( victim_dirty_now )
+                        st <= S_WB_PRIME;
+                    else
+                        st <= S_FILL_REQ;
                 end
             end
             S_RD_RESP: begin
@@ -586,6 +690,9 @@ always @(posedge clk) begin
             S_WR_COMMIT: begin
                 ok <= 1'b1;
                 st <= S_IDLE;
+            end
+            S_WB_LOAD: begin
+                st <= S_WB_PRIME;
             end
             S_WB_PRIME: begin
                 wb_q <= stream_q;
@@ -618,14 +725,56 @@ always @(posedge clk) begin
                 end
             end
             S_WB_GAP: begin
-                fill_after_wb <= 1'b1;
-                st <= S_FILL_REQ;
+                if( flushing ) begin
+                    st <= S_FLUSH_ADVANCE;
+                end else begin
+                    fill_after_wb <= 1'b1;
+                    st <= S_FILL_REQ;
+                end
+            end
+            S_FLUSH_WAIT: begin
+                st <= S_FLUSH_CHECK;
+            end
+            S_FLUSH_CHECK: begin
+                if( scan_valid_now && scan_dirty_now ) begin
+                    blk_l          <= scan_blk_now;
+                    victim_tag_l   <= scan_tag_now;
+                    stream_word    <= {WW{1'b0}};
+                    fill_tail_seen <= 1'b0;
+                    st             <= S_WB_LOAD;
+                end else begin
+                    st <= S_FLUSH_ADVANCE;
+                end
+            end
+            S_FLUSH_ADVANCE: begin
+                if( flush_set_l == LAST_SET && flush_way_l == LAST_WAY ) begin
+                    flushing   <= 1'b0;
+                    flush_done <= 1'b1;
+                    st         <= S_IDLE;
+                end else begin
+                    if( flush_way_l == LAST_WAY ) begin
+                        flush_way_l <= {WAYW{1'b0}};
+                        flush_set_l <= flush_set_l + 1'd1;
+                    end else begin
+                        flush_way_l <= flush_way_l + 1'd1;
+                    end
+                    st <= S_FLUSH_WAIT;
+                end
+            end
+            S_INVAL_CLEAR: begin
+                if( clr_set == LAST_SET ) begin
+                    invalidating    <= 1'b0;
+                    invalidate_done <= 1'b1;
+                    st              <= S_IDLE;
+                end else begin
+                    clr_set <= clr_set + 1'd1;
+                end
             end
             S_FILL_REQ: begin
                 if( ext_ack ) begin
                     stream_word    <= {WW{1'b0}};
                     fill_tail_seen <= 1'b0;
-                    st             <= fill_after_wb ? S_FILL_WB_WAIT : S_FILL_STREAM;
+                    st             <= S_FILL_WB_WAIT;
                 end
             end
             S_FILL_WB_WAIT: begin
@@ -669,6 +818,12 @@ always @(posedge clk) begin
                 st <= S_IDLE;
             end
         endcase
+        if( flush_rd_resp_l ) begin
+            /* verilator lint_off WIDTHTRUNC */
+            dout <= flush_rd_resp_word[DW-1:0];
+            /* verilator lint_on WIDTHTRUNC */
+            ok <= 1'b1;
+        end
     end
 end
 

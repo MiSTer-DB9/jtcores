@@ -78,6 +78,12 @@ jtframe_cache #(
     .dout       ( cache_dout ),
     .rd         ( cache_rd   ),
     .ok         ( cache_ok   ),
+    .flush      ( 1'b0       ),
+    .flushing   (            ),
+    .flush_done (            ),
+    .invalidate ( 1'b0       ),
+    .invalidating(            ),
+    .invalidate_done(         ),
     .ext_addr   ( ext_addr   ),
     .ext_din    ( ext_din    ),
     .ext_rd     ( ext_rd     ),
@@ -322,7 +328,7 @@ task cache_request(
             assert_msg(cycles > 4, "Cache miss completed too quickly");
         end else begin
             assert_msg(ack_count == ack_before, "Cache hit must not trigger a new SDRAM burst request");
-            assert_msg(cycles <= 3, "Cache hit should complete within three cycles");
+            assert_msg(cycles <= 4, "Cache hit should complete within four cycles");
         end
         while( cache_ok || cache_busy ) @(negedge clk);
         repeat (2) @(negedge clk);

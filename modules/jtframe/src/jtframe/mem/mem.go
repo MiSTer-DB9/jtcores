@@ -207,17 +207,59 @@ func data_name(bus Bus) string     { return bus.Get_dname() }
 func writeable(bus Bus) bool       { return bus.Is_wr() }
 func is_nbits(bus Bus, n int) bool { return bus.Is_nbits(n) }
 func byte_en_width(dw int) int     { return dw >> 3 }
+func bram_latch_input(latch string) int {
+	switch latch {
+	case "inputs", "all":
+		return 1
+	default:
+		return 0
+	}
+}
+func bram_latch_output(latch string) int {
+	switch latch {
+	case "outputs", "all":
+		return 1
+	default:
+		return 0
+	}
+}
+func valid_bram_latch(latch string) bool {
+	switch latch {
+	case "", "none", "inputs", "outputs", "all":
+		return true
+	default:
+		return false
+	}
+}
+func cache_inval_mask(lines []SDRAMCacheLine, source int) string {
+	mask := 0
+	if source < len(lines) {
+		targets := make(map[string]bool, len(lines[source].Flush.Invalidates))
+		for _, each := range lines[source].Flush.Invalidates {
+			targets[each] = true
+		}
+		for k, each := range lines {
+			if targets[each.Name] {
+				mask |= 1 << k
+			}
+		}
+	}
+	return fmt.Sprintf("8'b%08b", mask)
+}
 
 var funcMap = template.FuncMap{
 	"addr_range":            addr_range,
 	"cache_line_aw":         cache_line_aw,
 	"cache_line_addr_range": cache_line_addr_range,
+	"cache_inval_mask":      cache_inval_mask,
 	"data_range":            data_range,
 	"slot_addr_width":       slot_addr_width,
 	"data_name":             data_name,
 	"writeable":             writeable,
 	"is_nbits":              is_nbits,
 	"byte_en_width":         byte_en_width,
+	"bram_latch_input":      bram_latch_input,
+	"bram_latch_output":     bram_latch_output,
 }
 
 func ParseFile(core, filename string, cfg *MemConfig) error {
@@ -287,6 +329,12 @@ func (cfg *MemConfig) check_gfx_sort() error {
 func (cfg *MemConfig) normalize_bram() error {
 	for k := range cfg.BRAM {
 		bram := &cfg.BRAM[k]
+		if !valid_bram_latch(bram.Latch) {
+			return fmt.Errorf("BRAM %s has unsupported latch value %q", bram.Name, bram.Latch)
+		}
+		if !valid_bram_latch(bram.Dual_port.Latch) {
+			return fmt.Errorf("BRAM %s dual port %s has unsupported latch value %q", bram.Name, bram.Dual_port.Name, bram.Dual_port.Latch)
+		}
 		if bram.Simfile.Big_endian && bram.Data_width == 8 {
 			return fmt.Errorf("BRAM %s cannot use simfile.big_endian with 8-bit data width", bram.Name)
 		}
@@ -555,6 +603,9 @@ func make_dump2bin(corename string, cfg *MemConfig) (e error) {
 func bankOffset(cfg *MemConfig, corename string) (e error) {
 	mra_cfg, e := mra.ParseTomlFile(corename)
 	if e != nil {
+		if os.IsNotExist(e) {
+			return nil
+		}
 		return e
 	}
 	if len(mra_cfg.Header.Offset.Regions) == 0 {
@@ -562,6 +613,7 @@ func bankOffset(cfg *MemConfig, corename string) (e error) {
 	}
 	cfg.Balut = 1
 	cfg.Lutsh = mra_cfg.Header.Offset.Bits
+	cfg.BalutReverse = mra_cfg.Header.Offset.Reverse
 	return nil
 }
 
@@ -685,6 +737,9 @@ func (cfg *MemConfig) check_cache_lanes() error {
 	if err != nil {
 		return err
 	}
+	if err := cfg.check_cache_invalidation(param_values); err != nil {
+		return err
+	}
 	if total_cache > 512*1024 {
 		return fmt.Errorf("jtframe mem: cache-lanes use %d bytes of BRAM, which must stay below 512kB", total_cache)
 	}
@@ -763,6 +818,9 @@ func (cfg *MemConfig) parse_cache_lanes(param_values map[string]string) (total_c
 		if line.Rw && k >= 4 {
 			return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s enables rw, but only the first four cache-lanes may use rw", line.Name)
 		}
+		if line.Flush.Enable && !line.Rw {
+			return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s enables flush, but flush requires rw", line.Name)
+		}
 		if line.Blocks.Count == 0 {
 			return 0, 0, fmt.Errorf("jtframe mem: cache-lane %s must define blocks.count and it cannot be zero", line.Name)
 		}
@@ -824,6 +882,59 @@ func (cfg *MemConfig) parse_cache_lanes(param_values map[string]string) (total_c
 		total_cache += line.Total
 	}
 	return total_cache, max_cache_size, nil
+}
+
+func (cfg *MemConfig) check_cache_invalidation(param_values map[string]string) error {
+	name_idx := make(map[string]int, len(cfg.SDRAM.Cache_lanes))
+	for k, line := range cfg.SDRAM.Cache_lanes {
+		name_idx[line.Name] = k
+	}
+	for src_idx, source := range cfg.SDRAM.Cache_lanes {
+		if len(source.Flush.Invalidates) == 0 {
+			continue
+		}
+		if !source.Flush.Enable {
+			return fmt.Errorf("jtframe mem: cache-lane %s uses flush.invalidates, but flush.enable must be true", source.Name)
+		}
+		src_start, src_end, err := cache_lane_abs_range(source, param_values)
+		if err != nil {
+			return fmt.Errorf("jtframe mem: cache-lane %s flush.invalidates: %w", source.Name, err)
+		}
+		for _, target_name := range source.Flush.Invalidates {
+			target_idx, found := name_idx[target_name]
+			if !found {
+				return fmt.Errorf("jtframe mem: cache-lane %s invalidates unknown cache-lane %s", source.Name, target_name)
+			}
+			if target_idx == src_idx {
+				return fmt.Errorf("jtframe mem: cache-lane %s cannot invalidate itself", source.Name)
+			}
+			target := cfg.SDRAM.Cache_lanes[target_idx]
+			if target.Rw {
+				return fmt.Errorf("jtframe mem: cache-lane %s invalidates %s, but invalidation targets must be read-only", source.Name, target.Name)
+			}
+			tgt_start, tgt_end, err := cache_lane_abs_range(target, param_values)
+			if err != nil {
+				return fmt.Errorf("jtframe mem: cache-lane %s invalidate target %s: %w", source.Name, target.Name, err)
+			}
+			if src_end <= tgt_start || tgt_end <= src_start {
+				return fmt.Errorf("jtframe mem: cache-lane %s invalidates %s, but their SDRAM ranges do not overlap", source.Name, target.Name)
+			}
+		}
+	}
+	return nil
+}
+
+func cache_lane_abs_range(line SDRAMCacheLine, param_values map[string]string) (start, end int64, err error) {
+	if line.Full_range {
+		return 0, int64(cache_total_sdram_bytes()), nil
+	}
+	offset_words, err := resolve_cache_lane_offset_words(line.At.Offset, param_values)
+	if err != nil {
+		return 0, 0, err
+	}
+	start = int64(line.At.Bank)*cache_bank_size_bytes() + (offset_words << 1)
+	end = start + int64(line.At.Length_bytes)
+	return start, end, nil
 }
 
 func resolve_cache_lane_offset_words(offset string, param_values map[string]string) (int64, error) {

@@ -28,6 +28,7 @@ module jtframe_cache_mux #(
               AW0_0     = DW0==128 ? 4 : DW0==64 ? 3 : DW0==32 ? 2 : DW0==16 ? 1 : 0,
               BA0       = 0,
               OFFSET0   = 0,
+              INVAL_MASK0 = 8'd0,
               ENDIAN1   = ENDIAN,
               FULL1     = 0,
               AW1       = 23,
@@ -37,6 +38,7 @@ module jtframe_cache_mux #(
               AW0_1     = DW1==128 ? 4 : DW1==64 ? 3 : DW1==32 ? 2 : DW1==16 ? 1 : 0,
               BA1       = 0,
               OFFSET1   = 0,
+              INVAL_MASK1 = 8'd0,
               ENDIAN2   = ENDIAN,
               FULL2     = 0,
               AW2       = 23,
@@ -46,6 +48,7 @@ module jtframe_cache_mux #(
               AW0_2     = DW2==128 ? 4 : DW2==64 ? 3 : DW2==32 ? 2 : DW2==16 ? 1 : 0,
               BA2       = 0,
               OFFSET2   = 0,
+              INVAL_MASK2 = 8'd0,
               ENDIAN3   = ENDIAN,
               FULL3     = 0,
               AW3       = 23,
@@ -55,6 +58,7 @@ module jtframe_cache_mux #(
               AW0_3     = DW3==128 ? 4 : DW3==64 ? 3 : DW3==32 ? 2 : DW3==16 ? 1 : 0,
               BA3       = 0,
               OFFSET3   = 0,
+              INVAL_MASK3 = 8'd0,
               ENDIAN4   = ENDIAN,
               FULL4     = 0,
               AW4       = 23,
@@ -64,6 +68,7 @@ module jtframe_cache_mux #(
               AW0_4     = DW4==128 ? 4 : DW4==64 ? 3 : DW4==32 ? 2 : DW4==16 ? 1 : 0,
               BA4       = 0,
               OFFSET4   = 0,
+              INVAL_MASK4 = 8'd0,
               ENDIAN5   = ENDIAN,
               FULL5     = 0,
               AW5       = 23,
@@ -73,6 +78,7 @@ module jtframe_cache_mux #(
               AW0_5     = DW5==128 ? 4 : DW5==64 ? 3 : DW5==32 ? 2 : DW5==16 ? 1 : 0,
               BA5       = 0,
               OFFSET5   = 0,
+              INVAL_MASK5 = 8'd0,
               ENDIAN6   = ENDIAN,
               FULL6     = 0,
               AW6       = 23,
@@ -82,6 +88,7 @@ module jtframe_cache_mux #(
               AW0_6     = DW6==128 ? 4 : DW6==64 ? 3 : DW6==32 ? 2 : DW6==16 ? 1 : 0,
               BA6       = 0,
               OFFSET6   = 0,
+              INVAL_MASK6 = 8'd0,
               ENDIAN7   = ENDIAN,
               FULL7     = 0,
               AW7       = 23,
@@ -90,7 +97,8 @@ module jtframe_cache_mux #(
               DW7       = 8,
               AW0_7     = DW7==128 ? 4 : DW7==64 ? 3 : DW7==32 ? 2 : DW7==16 ? 1 : 0,
               BA7       = 0,
-              OFFSET7   = 0
+              OFFSET7   = 0,
+              INVAL_MASK7 = 8'd0
 )(
     input                       rst,
     input                       clk,
@@ -102,6 +110,9 @@ module jtframe_cache_mux #(
     input      [DW0-1:0]        din0,
     input      [DW0/8-1:0]      wdsn0,
     output                      ok0,
+    input                       flush0,
+    output                      flushing0,
+    output                      flush_done0,
 
     input      [AW1-1:AW0_1]    addr1,
     output     [DW1-1:0]        dout1,
@@ -110,6 +121,9 @@ module jtframe_cache_mux #(
     input      [DW1-1:0]        din1,
     input      [DW1/8-1:0]      wdsn1,
     output                      ok1,
+    input                       flush1,
+    output                      flushing1,
+    output                      flush_done1,
 
     input      [AW2-1:AW0_2]    addr2,
     output     [DW2-1:0]        dout2,
@@ -118,6 +132,9 @@ module jtframe_cache_mux #(
     input      [DW2-1:0]        din2,
     input      [DW2/8-1:0]      wdsn2,
     output                      ok2,
+    input                       flush2,
+    output                      flushing2,
+    output                      flush_done2,
 
     input      [AW3-1:AW0_3]    addr3,
     output     [DW3-1:0]        dout3,
@@ -126,26 +143,41 @@ module jtframe_cache_mux #(
     input      [DW3-1:0]        din3,
     input      [DW3/8-1:0]      wdsn3,
     output                      ok3,
+    input                       flush3,
+    output                      flushing3,
+    output                      flush_done3,
 
     input      [AW4-1:AW0_4]    addr4,
     output     [DW4-1:0]        dout4,
     input                       rd4,
     output                      ok4,
+    input                       flush4,
+    output                      flushing4,
+    output                      flush_done4,
 
     input      [AW5-1:AW0_5]    addr5,
     output     [DW5-1:0]        dout5,
     input                       rd5,
     output                      ok5,
+    input                       flush5,
+    output                      flushing5,
+    output                      flush_done5,
 
     input      [AW6-1:AW0_6]    addr6,
     output     [DW6-1:0]        dout6,
     input                       rd6,
     output                      ok6,
+    input                       flush6,
+    output                      flushing6,
+    output                      flush_done6,
 
     input      [AW7-1:AW0_7]    addr7,
     output     [DW7-1:0]        dout7,
     input                       rd7,
     output                      ok7,
+    input                       flush7,
+    output                      flushing7,
+    output                      flush_done7,
 
     output reg [SDRAM_AW-1:1]   addr,
     output reg [1:0]            ba,
@@ -192,6 +224,13 @@ wire [DW4-1:0] cache_dout4;
 wire [DW5-1:0] cache_dout5;
 wire [DW6-1:0] cache_dout6;
 wire [DW7-1:0] cache_dout7;
+wire [3:0] cache_flushing, cache_flush_done;
+wire [7:0] cache_invalidate_done;
+wire [7:0] cache_invalidate;
+wire [3:0] flush_done_out, flush_inval_active;
+wire cache_flush_ro  = 1'b0;
+wire unused_flush    = flush4 | flush5 | flush6 | flush7;
+wire inactive_status = unused_flush & 1'b0;
 
 wire req0 = rd0 | wr0;
 wire req1 = rd1 | wr1;
@@ -202,63 +241,14 @@ wire req5 = rd5;
 wire req6 = rd6;
 wire req7 = rd7;
 
-wire [7:0] ext_req = {
-    ext_rd7 | ext_wr7,
-    ext_rd6 | ext_wr6,
-    ext_rd5 | ext_wr5,
-    ext_rd4 | ext_wr4,
-    ext_rd3 | ext_wr3,
-    ext_rd2 | ext_wr2,
-    ext_rd1 | ext_wr1,
-    ext_rd0 | ext_wr0
-};
-
-reg        active;
-reg [2:0]  active_sel;
-
-wire [7:0] ext_ack = {
-    active && active_sel==3'd7 && ack,
-    active && active_sel==3'd6 && ack,
-    active && active_sel==3'd5 && ack,
-    active && active_sel==3'd4 && ack,
-    active && active_sel==3'd3 && ack,
-    active && active_sel==3'd2 && ack,
-    active && active_sel==3'd1 && ack,
-    active && active_sel==3'd0 && ack
-};
-
-wire [7:0] ext_dst = {
-    active && active_sel==3'd7 && dst,
-    active && active_sel==3'd6 && dst,
-    active && active_sel==3'd5 && dst,
-    active && active_sel==3'd4 && dst,
-    active && active_sel==3'd3 && dst,
-    active && active_sel==3'd2 && dst,
-    active && active_sel==3'd1 && dst,
-    active && active_sel==3'd0 && dst
-};
-
-wire [7:0] ext_dok = {
-    active && active_sel==3'd7 && dok,
-    active && active_sel==3'd6 && dok,
-    active && active_sel==3'd5 && dok,
-    active && active_sel==3'd4 && dok,
-    active && active_sel==3'd3 && dok,
-    active && active_sel==3'd2 && dok,
-    active && active_sel==3'd1 && dok,
-    active && active_sel==3'd0 && dok
-};
-
-wire [7:0] ext_rdy = {
-    active && active_sel==3'd7 && rdy,
-    active && active_sel==3'd6 && rdy,
-    active && active_sel==3'd5 && rdy,
-    active && active_sel==3'd4 && rdy,
-    active && active_sel==3'd3 && rdy,
-    active && active_sel==3'd2 && rdy,
-    active && active_sel==3'd1 && rdy,
-    active && active_sel==3'd0 && rdy
-};
+wire [7:0] ext_rd_bus = { ext_rd7, ext_rd6, ext_rd5, ext_rd4,
+                          ext_rd3, ext_rd2, ext_rd1, ext_rd0 };
+wire [7:0] ext_wr_bus = { ext_wr7, ext_wr6, ext_wr5, ext_wr4,
+                          ext_wr3, ext_wr2, ext_wr1, ext_wr0 };
+wire [7:0] ext_req = ext_rd_bus | ext_wr_bus;
+wire [7:0] ext_ack, ext_dst, ext_dok, ext_rdy;
+wire       active;
+wire [2:0] active_sel;
 
 assign bank_addr0 = {1'b0, ext_addr0[SDRAM_AW-1:1]} + {1'b0, OFFSET0[0+:SDRAM_AW-1]};
 assign bank_addr1 = {1'b0, ext_addr1[SDRAM_AW-1:1]} + {1'b0, OFFSET1[0+:SDRAM_AW-1]};
@@ -269,8 +259,6 @@ assign bank_addr5 = {1'b0, ext_addr5[SDRAM_AW-1:1]} + {1'b0, OFFSET5[0+:SDRAM_AW
 assign bank_addr6 = {1'b0, ext_addr6[SDRAM_AW-1:1]} + {1'b0, OFFSET6[0+:SDRAM_AW-1]};
 assign bank_addr7 = {1'b0, ext_addr7[SDRAM_AW-1:1]} + {1'b0, OFFSET7[0+:SDRAM_AW-1]};
 
-reg [2:0]  next_sel;
-reg        next_valid;
 reg [7:0]  ok_hold;
 reg [DW0-1:0] dout_hold0;
 reg [DW1-1:0] dout_hold1;
@@ -280,7 +268,6 @@ reg [DW4-1:0] dout_hold4;
 reg [DW5-1:0] dout_hold5;
 reg [DW6-1:0] dout_hold6;
 reg [DW7-1:0] dout_hold7;
-
 assign dout0 = dout_hold0;
 assign dout1 = dout_hold1;
 assign dout2 = dout_hold2;
@@ -297,58 +284,57 @@ assign ok4   = ok_hold[4];
 assign ok5   = ok_hold[5];
 assign ok6   = ok_hold[6];
 assign ok7   = ok_hold[7];
+assign flushing0   = cache_flushing[0] | flush_inval_active[0];
+assign flushing1   = cache_flushing[1] | flush_inval_active[1];
+assign flushing2   = cache_flushing[2] | flush_inval_active[2];
+assign flushing3   = cache_flushing[3] | flush_inval_active[3];
+assign flushing4   = inactive_status;
+assign flushing5   = inactive_status;
+assign flushing6   = inactive_status;
+assign flushing7   = inactive_status;
+assign flush_done0 = flush_done_out[0];
+assign flush_done1 = flush_done_out[1];
+assign flush_done2 = flush_done_out[2];
+assign flush_done3 = flush_done_out[3];
+assign flush_done4 = inactive_status;
+assign flush_done5 = inactive_status;
+assign flush_done6 = inactive_status;
+assign flush_done7 = inactive_status;
 
-assign rd = active && (
-    (active_sel == 3'd0 && ext_rd0) ||
-    (active_sel == 3'd1 && ext_rd1) ||
-    (active_sel == 3'd2 && ext_rd2) ||
-    (active_sel == 3'd3 && ext_rd3) ||
-    (active_sel == 3'd4 && ext_rd4) ||
-    (active_sel == 3'd5 && ext_rd5) ||
-    (active_sel == 3'd6 && ext_rd6) ||
-    (active_sel == 3'd7 && ext_rd7)
+jtframe_cache_mux_arb u_arb(
+    .rst        ( rst        ),
+    .clk        ( clk        ),
+    .ext_req    ( ext_req    ),
+    .ext_rd     ( ext_rd_bus ),
+    .ext_wr     ( ext_wr_bus ),
+    .ack        ( ack        ),
+    .dst        ( dst        ),
+    .dok        ( dok        ),
+    .rdy        ( rdy        ),
+    .active     ( active     ),
+    .active_sel ( active_sel ),
+    .ext_ack    ( ext_ack    ),
+    .ext_dst    ( ext_dst    ),
+    .ext_dok    ( ext_dok    ),
+    .ext_rdy    ( ext_rdy    ),
+    .rd         ( rd         ),
+    .wr         ( wr         )
 );
 
-assign wr = active && (
-    (active_sel == 3'd0 && ext_wr0) ||
-    (active_sel == 3'd1 && ext_wr1) ||
-    (active_sel == 3'd2 && ext_wr2) ||
-    (active_sel == 3'd3 && ext_wr3) ||
-    (active_sel == 3'd4 && ext_wr4) ||
-    (active_sel == 3'd5 && ext_wr5) ||
-    (active_sel == 3'd6 && ext_wr6) ||
-    (active_sel == 3'd7 && ext_wr7)
+jtframe_cache_mux_flush #(
+    .INVAL_MASK0 ( INVAL_MASK0 ),
+    .INVAL_MASK1 ( INVAL_MASK1 ),
+    .INVAL_MASK2 ( INVAL_MASK2 ),
+    .INVAL_MASK3 ( INVAL_MASK3 )
+) u_flush (
+    .rst                   ( rst                   ),
+    .clk                   ( clk                   ),
+    .cache_flush_done      ( cache_flush_done      ),
+    .cache_invalidate_done ( cache_invalidate_done ),
+    .cache_invalidate      ( cache_invalidate      ),
+    .flush_done_out        ( flush_done_out        ),
+    .flush_inval_active    ( flush_inval_active    )
 );
-
-always @(*) begin
-    next_valid = 1'b0;
-    next_sel   = 3'd0;
-    if( ext_req[0] ) begin
-        next_valid = 1'b1;
-        next_sel   = 3'd0;
-    end else if( ext_req[1] ) begin
-        next_valid = 1'b1;
-        next_sel   = 3'd1;
-    end else if( ext_req[2] ) begin
-        next_valid = 1'b1;
-        next_sel   = 3'd2;
-    end else if( ext_req[3] ) begin
-        next_valid = 1'b1;
-        next_sel   = 3'd3;
-    end else if( ext_req[4] ) begin
-        next_valid = 1'b1;
-        next_sel   = 3'd4;
-    end else if( ext_req[5] ) begin
-        next_valid = 1'b1;
-        next_sel   = 3'd5;
-    end else if( ext_req[6] ) begin
-        next_valid = 1'b1;
-        next_sel   = 3'd6;
-    end else if( ext_req[7] ) begin
-        next_valid = 1'b1;
-        next_sel   = 3'd7;
-    end
-end
 
 always @(*) begin
     addr = {SDRAM_AW-1{1'b0}};
@@ -440,8 +426,6 @@ end
 
 always @(posedge clk) begin
     if( rst ) begin
-        active     <= 1'b0;
-        active_sel <= 3'd0;
         ok_hold    <= 8'd0;
         dout_hold0 <= {DW0{1'b0}};
         dout_hold1 <= {DW1{1'b0}};
@@ -494,14 +478,6 @@ always @(posedge clk) begin
             ok_hold[7] <= 1'b1;
         end
 
-        if( active ) begin
-            if( rdy ) begin
-                active <= 1'b0;
-            end
-        end else if( next_valid ) begin
-            active     <= 1'b1;
-            active_sel <= next_sel;
-        end
     end
 end
 
@@ -522,6 +498,12 @@ jtframe_cache #(
     .wr         ( wr0                           ),
     .wdsn       ( wdsn0                         ),
     .ok         ( cache_ok0                     ),
+    .flush      ( flush0                        ),
+    .flushing   ( cache_flushing[0]             ),
+    .flush_done ( cache_flush_done[0]           ),
+    .invalidate ( cache_invalidate[0]           ),
+    .invalidating(                               ),
+    .invalidate_done( cache_invalidate_done[0]   ),
     .ext_addr   ( ext_addr0                     ),
     .ext_din    ( din                           ),
     .ext_dout   ( ext_dout0                     ),
@@ -550,6 +532,12 @@ jtframe_cache #(
     .wr         ( wr1                           ),
     .wdsn       ( wdsn1                         ),
     .ok         ( cache_ok1                     ),
+    .flush      ( flush1                        ),
+    .flushing   ( cache_flushing[1]             ),
+    .flush_done ( cache_flush_done[1]           ),
+    .invalidate ( cache_invalidate[1]           ),
+    .invalidating(                               ),
+    .invalidate_done( cache_invalidate_done[1]   ),
     .ext_addr   ( ext_addr1                     ),
     .ext_din    ( din                           ),
     .ext_dout   ( ext_dout1                     ),
@@ -578,6 +566,12 @@ jtframe_cache #(
     .wr         ( wr2                           ),
     .wdsn       ( wdsn2                         ),
     .ok         ( cache_ok2                     ),
+    .flush      ( flush2                        ),
+    .flushing   ( cache_flushing[2]             ),
+    .flush_done ( cache_flush_done[2]           ),
+    .invalidate ( cache_invalidate[2]           ),
+    .invalidating(                               ),
+    .invalidate_done( cache_invalidate_done[2]   ),
     .ext_addr   ( ext_addr2                     ),
     .ext_din    ( din                           ),
     .ext_dout   ( ext_dout2                     ),
@@ -606,6 +600,12 @@ jtframe_cache #(
     .wr         ( wr3                           ),
     .wdsn       ( wdsn3                         ),
     .ok         ( cache_ok3                     ),
+    .flush      ( flush3                        ),
+    .flushing   ( cache_flushing[3]             ),
+    .flush_done ( cache_flush_done[3]           ),
+    .invalidate ( cache_invalidate[3]           ),
+    .invalidating(                               ),
+    .invalidate_done( cache_invalidate_done[3]   ),
     .ext_addr   ( ext_addr3                     ),
     .ext_din    ( din                           ),
     .ext_dout   ( ext_dout3                     ),
@@ -634,6 +634,12 @@ jtframe_cache #(
     .wr         ( 1'b0                          ),
     .wdsn       ( {(DW4/8){1'b1}}               ),
     .ok         ( cache_ok4                     ),
+    .flush      ( cache_flush_ro                ),
+    .flushing   (                               ),
+    .flush_done (                               ),
+    .invalidate ( cache_invalidate[4]           ),
+    .invalidating(                               ),
+    .invalidate_done( cache_invalidate_done[4]   ),
     .ext_addr   ( ext_addr4                     ),
     .ext_din    ( din                           ),
     .ext_dout   ( ext_dout4                     ),
@@ -662,6 +668,12 @@ jtframe_cache #(
     .wr         ( 1'b0                          ),
     .wdsn       ( {(DW5/8){1'b1}}               ),
     .ok         ( cache_ok5                     ),
+    .flush      ( cache_flush_ro                ),
+    .flushing   (                               ),
+    .flush_done (                               ),
+    .invalidate ( cache_invalidate[5]           ),
+    .invalidating(                               ),
+    .invalidate_done( cache_invalidate_done[5]   ),
     .ext_addr   ( ext_addr5                     ),
     .ext_din    ( din                           ),
     .ext_dout   ( ext_dout5                     ),
@@ -690,6 +702,12 @@ jtframe_cache #(
     .wr         ( 1'b0                          ),
     .wdsn       ( {(DW6/8){1'b1}}               ),
     .ok         ( cache_ok6                     ),
+    .flush      ( cache_flush_ro                ),
+    .flushing   (                               ),
+    .flush_done (                               ),
+    .invalidate ( cache_invalidate[6]           ),
+    .invalidating(                               ),
+    .invalidate_done( cache_invalidate_done[6]   ),
     .ext_addr   ( ext_addr6                     ),
     .ext_din    ( din                           ),
     .ext_dout   ( ext_dout6                     ),
@@ -718,6 +736,12 @@ jtframe_cache #(
     .wr         ( 1'b0                          ),
     .wdsn       ( {(DW7/8){1'b1}}               ),
     .ok         ( cache_ok7                     ),
+    .flush      ( cache_flush_ro                ),
+    .flushing   (                               ),
+    .flush_done (                               ),
+    .invalidate ( cache_invalidate[7]           ),
+    .invalidating(                               ),
+    .invalidate_done( cache_invalidate_done[7]   ),
     .ext_addr   ( ext_addr7                     ),
     .ext_din    ( din                           ),
     .ext_dout   ( ext_dout7                     ),

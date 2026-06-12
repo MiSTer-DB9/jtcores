@@ -75,6 +75,13 @@ wire        {{.Name}}_we;
 wire [{{ sub .Data_width 1 }}:0] {{.Name}}_din;
 wire [{{ sub (byte_en_width .Data_width) 1 }}:0] {{.Name}}_dsn;
 {{- end}}
+{{- if .Flush.Enable }}
+wire        {{.Name}}_flush, {{.Name}}_flushing, {{.Name}}_flush_done;
+`ifdef SCENE
+assign {{.Name}}_flushing   = 1'b0;
+assign {{.Name}}_flush_done = {{.Name}}_flush;
+`endif
+{{- end}}
 {{- end}}
 wire        prom_we, header;
 wire [SDRAMW-2:0] raw_addr, post_addr;
@@ -203,6 +210,11 @@ jt{{if .Game}}{{.Game}}{{else}}{{.Core}}{{end}}_game u_game(
     .{{.Name}}_din  ( {{.Name}}_din  ),
     .{{.Name}}_dsn  ( {{.Name}}_dsn  ),
     {{- end}}
+    {{- if .Flush.Enable }}
+    .{{.Name}}_flush      ( {{.Name}}_flush      ),
+    .{{.Name}}_flushing   ( {{.Name}}_flushing   ),
+    .{{.Name}}_flush_done ( {{.Name}}_flush_done ),
+    {{- end}}
     {{- end}}
     {{- else }}
     {{- range .SDRAM.Banks}}
@@ -317,6 +329,7 @@ jtframe_dwnld #(
 `endif{{ if .Balut }}
     .BALUT      ( {{.Balut}}    ),  // Using offsets in header for
     .LUTSH      ( {{.Lutsh}}    ),  // bank assignment
+    .BALUT_REVERSE( {{if .BalutReverse}}1{{else}}0{{end}} ),
 {{else}}
 `ifdef JTFRAME_BA1_START
     .BA1_START ( BA1_START ),
@@ -366,6 +379,9 @@ jtframe_headerbyte #(.AW(6)) u_pcbid(
 `ifdef VERILATOR_KEEP_SDRAM /* verilator tracing_on */ `else /* verilator tracing_off */ `endif
 {{ $assign_holdrst := true }}
 {{- if gt (len .SDRAM.Cache_lanes) 0 }}
+reg rst_cache;
+always @(posedge clk) rst_cache <= rst;
+
 jtframe_cache_mux #(
     .SDRAM_AW ( SDRAMW ),
     .ENDIAN   ( 0 ){{- range $index, $line := .SDRAM.Cache_lanes }},
@@ -376,9 +392,10 @@ jtframe_cache_mux #(
     .BLKSIZE{{$index}} ( {{ $line.Blocks.Size_bytes }} ),
     .DW{{$index}}      ( {{ printf "%2d" $line.Data_width }} ),
     .BA{{$index}}      ( {{ if $line.Full_range }}0{{ else }}{{ $line.At.Bank }}{{ end }} ),
-    .OFFSET{{$index}}  ( {{ if and (not $line.Full_range) $line.At.Offset }}{{ $line.At.Offset }}{{ else }}0{{ end }} ){{- end }}
+    .OFFSET{{$index}}  ( {{ if and (not $line.Full_range) $line.At.Offset }}{{ $line.At.Offset }}{{ else }}0{{ end }} ),
+    .INVAL_MASK{{$index}} ( {{ cache_inval_mask $.SDRAM.Cache_lanes $index }} ){{- end }}
 ) u_cache(
-    .rst       ( rst      ),
+    .rst       ( rst_cache),
     .clk       ( clk      ),
 {{- range $index, $line := .SDRAM.Cache_lanes}}
     .addr{{$index}} ( {{ $line.Name }}_addr ),
@@ -390,6 +407,21 @@ jtframe_cache_mux #(
     .wdsn{{$index}} ( {{ if $line.Rw }}{{ $line.Name }}_dsn{{ else }}{{ printf "%d'd0" (byte_en_width $line.Data_width) }}{{ end }} ),
     {{- end}}
     .ok{{$index}}   ( {{ $line.Name }}_ok   ),
+    {{- if $line.Flush.Enable }}
+`ifdef SCENE
+    .flush{{$index}}      ( 1'b0 ),
+    .flushing{{$index}}   (  ),
+    .flush_done{{$index}} (  ),
+`else
+    .flush{{$index}}      ( {{ $line.Name }}_flush ),
+    .flushing{{$index}}   ( {{ $line.Name }}_flushing ),
+    .flush_done{{$index}} ( {{ $line.Name }}_flush_done ),
+`endif
+    {{- else }}
+    .flush{{$index}}      ( 1'b0 ),
+    .flushing{{$index}}   (  ),
+    .flush_done{{$index}} (  ),
+    {{- end }}
 {{- end}}
 {{- range $index, $_ := until 8}}
 {{- if ge $index (len $.SDRAM.Cache_lanes) }}
@@ -402,6 +434,9 @@ jtframe_cache_mux #(
     .wdsn{{$index}} ( 0    ),
     {{- end}}
     .ok{{$index}}   (      ),
+    .flush{{$index}}      ( 1'b0 ),
+    .flushing{{$index}}   (      ),
+    .flush_done{{$index}} (      ),
 {{- end}}
 {{- end}}
     .addr      ( burst_addr ),
@@ -506,7 +541,11 @@ localparam JTFRAME_PROM_START=`JTFRAME_PROM_START;
 {{- else if $bus.Dual_port.Name }}
 // Dual port BRAM for {{$bus.Name}} and {{$bus.Dual_port.Name}}
 jtframe_dual_ram{{ if eq $bus.Data_width 16 }}16{{else if eq $bus.Data_width 32}}32{{end}} #(
-    .AW({{$bus.Addr_width}}{{if eq $bus.Data_width 16}}-1{{end}}){{ if or (eq $bus.Data_width 16) (eq $bus.Data_width 32) }},
+    .AW({{$bus.Addr_width}}{{if eq $bus.Data_width 16}}-1{{end}}),
+    .LATCH0_IN({{bram_latch_input $bus.Latch}}),
+    .LATCH0_OUT({{bram_latch_output $bus.Latch}}),
+    .LATCH1_IN({{bram_latch_input $bus.Dual_port.Latch}}),
+    .LATCH1_OUT({{bram_latch_output $bus.Dual_port.Latch}}){{ if or (eq $bus.Data_width 16) (eq $bus.Data_width 32) }},
     .ENDIAN({{if $bus.Simfile.Big_endian}}1{{else}}0{{end}}){{end}}{{ if $bus.Simfile.Enabled }},
     .SIMFILE("{{$bus.Name}}.bin"){{else}}{{end}}
 ) u_bram_{{$bus.Name}}(
@@ -548,7 +587,9 @@ jtframe_bram_rom #(
 {{else}}
 // BRAM for {{$bus.Name}}
 jtframe_ram{{ if eq $bus.Data_width 16 }}16{{else if eq $bus.Data_width 32}}32{{end}} #(
-    .AW({{$bus.Addr_width}}{{if eq $bus.Data_width 16}}-1{{end}}){{ if or (eq $bus.Data_width 16) (eq $bus.Data_width 32) }},
+    .AW({{$bus.Addr_width}}{{if eq $bus.Data_width 16}}-1{{end}}),
+    .LATCH_IN({{bram_latch_input $bus.Latch}}),
+    .LATCH_OUT({{bram_latch_output $bus.Latch}}){{ if or (eq $bus.Data_width 16) (eq $bus.Data_width 32) }},
     .ENDIAN({{if $bus.Simfile.Big_endian}}1{{else}}0{{end}}){{end}}{{ if and (ne $bus.Data_width 16) (ne $bus.Data_width 32) }},
     .DW({{$bus.Data_width}}){{end}}{{- if $bus.Simfile.Enabled }},
     .SIMFILE("{{$bus.Name}}.bin"){{end}}

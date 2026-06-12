@@ -86,6 +86,16 @@ static SDRAMPins burst_stop() {
     return pins;
 }
 
+static SDRAMPins refresh_cmd() {
+    SDRAMPins pins = nop();
+    pins.nras = false;
+    pins.ncas = false;
+    return pins;
+}
+
+static const uint64_t REFRESH_WINDOW_PS = 64'000'000'000ULL;
+static const int REFRESH_REQUIRED = 8192;
+
 static int row_base(int colw, int row) {
     return row << colw;
 }
@@ -108,6 +118,20 @@ static void expect_no_output(const SDRAMOutputs& out, const string& ctx) {
 static void expect_output(const SDRAMOutputs& out, uint16_t expected, const string& ctx) {
     check(out.dq_drive, ctx + ": expected DQ drive");
     check(out.dq == expected, ctx + ": expected " + hex16(expected) + " got " + hex16(out.dq));
+}
+
+static void expect_model_error(const function<void()>& action, const string& ctx) {
+    bool got_error = false;
+
+    try {
+        action();
+    } catch( const char* ) {
+        got_error = true;
+    } catch( const exception& ) {
+        got_error = true;
+    }
+
+    check(got_error, ctx + ": expected model error");
 }
 
 static void set_mode(SDRAMModel& model, int mode) {
@@ -321,6 +345,138 @@ static void test_full_page_auto_precharge_ignored(int colw) {
     check(model.active_burst_kind() == 1, "full-page burst still active");
 }
 
+static void test_read_auto_precharge_on_interrupt(int colw) {
+    SDRAMModel model(colw);
+    fill_row(model, colw, 0, 1);
+    fill_row(model, colw, 1, 2);
+    set_mode(model, 0x20 | 0x2);
+    open_row(model, 0, 1);
+    open_row(model, 1, 2);
+
+    expect_no_output(model.tick(read_cmd(0, 0, true)), "read auto-precharge command");
+    expect_no_output(model.tick(read_cmd(1, 0)), "read interrupt command");
+    check(!model.bank_active(0), "read auto-precharge interrupt closed original bank");
+    check(model.bank_active(1), "read interrupt bank remains active");
+}
+
+static void test_write_auto_precharge_on_interrupt(int colw) {
+    SDRAMModel model(colw);
+    fill_row(model, colw, 1, 2);
+    set_mode(model, 0x20 | 0x2);
+    open_row(model, 0, 1);
+    open_row(model, 1, 2);
+
+    expect_no_output(model.tick(write_cmd(0, 0, 0x1234, true)), "write auto-precharge command");
+    expect_no_output(model.tick(read_cmd(1, 0)), "write interrupt command");
+    check(!model.bank_active(0), "write auto-precharge interrupt closed original bank");
+    check(model.bank_active(1), "write interrupt bank remains active");
+}
+
+static void test_reject_read_without_active_bank(int colw) {
+    SDRAMModel model(colw);
+    fill_row(model, colw, 0, 0);
+    set_mode(model, 0x20 | 0x1);
+
+    expect_model_error([&]() {
+        model.tick(read_cmd(0, 0));
+    }, "read without active bank");
+}
+
+static void test_reject_write_without_active_bank(int colw) {
+    SDRAMModel model(colw);
+    set_mode(model, 0x20 | 0x1);
+
+    expect_model_error([&]() {
+        model.tick(write_cmd(0, 0, 0x1234));
+    }, "write without active bank");
+}
+
+static void test_reject_activate_active_bank(int colw) {
+    SDRAMModel model(colw);
+    set_mode(model, 0x20 | 0x1);
+    open_row(model, 0, 1);
+
+    expect_model_error([&]() {
+        model.tick(activate(0, 2));
+    }, "activate already-active bank");
+}
+
+static void test_reject_mode_register_set_with_active_bank(int colw) {
+    SDRAMModel model(colw);
+    set_mode(model, 0x20 | 0x1);
+    open_row(model, 0, 1);
+
+    expect_model_error([&]() {
+        model.tick(mrs(0x20 | 0x2));
+    }, "mode register set with active bank");
+}
+
+static void test_reject_refresh_with_active_bank(int colw) {
+    SDRAMModel model(colw);
+    set_mode(model, 0x20 | 0x1);
+    open_row(model, 0, 1);
+
+    expect_model_error([&]() {
+        model.tick(refresh_cmd());
+    }, "refresh with active bank");
+}
+
+static void drive_refresh_window(SDRAMModel& model, uint64_t final_time_ps) {
+    for( int k = 0; k < REFRESH_REQUIRED; k++ ) {
+        uint64_t simtime_ps = k == REFRESH_REQUIRED - 1 ?
+            final_time_ps :
+            (REFRESH_WINDOW_PS * static_cast<uint64_t>(k)) / (REFRESH_REQUIRED - 1);
+        expect_no_output(model.tick(refresh_cmd(), simtime_ps), "refresh command");
+    }
+}
+
+static void test_refresh_window_accepts_64ms(int colw) {
+    SDRAMModel model(colw);
+    drive_refresh_window(model, REFRESH_WINDOW_PS);
+}
+
+static void test_refresh_window_rejects_slow_refresh(int colw) {
+    SDRAMModel model(colw);
+    bool got_error = false;
+
+    try {
+        drive_refresh_window(model, REFRESH_WINDOW_PS + 1);
+    } catch( const char* error ) {
+        got_error = string(error).find("refresh") != string::npos;
+    }
+
+    check(got_error, "slow refresh window should raise an error");
+}
+
+static void test_refresh_timeout_without_auto_refresh(int colw) {
+    SDRAMModel model(colw);
+    bool got_error = false;
+
+    expect_no_output(model.tick(nop(), REFRESH_WINDOW_PS), "refresh timeout boundary");
+    try {
+        model.tick(nop(), REFRESH_WINDOW_PS + 1);
+    } catch( const char* error ) {
+        got_error = string(error).find("64 ms") != string::npos;
+    }
+
+    check(got_error, "missing refresh should raise after 64ms");
+}
+
+static void test_refresh_timeout_rejects_late_refresh(int colw) {
+    SDRAMModel model(colw);
+    bool got_error = false;
+
+    expect_no_output(model.tick(refresh_cmd(), 1), "first refresh");
+    expect_no_output(model.tick(nop(), REFRESH_WINDOW_PS + 1), "post-refresh timeout boundary");
+    try {
+        model.tick(refresh_cmd(), REFRESH_WINDOW_PS + 2);
+    } catch( const char* error ) {
+        got_error = string(error).find("64 ms") != string::npos;
+    }
+
+    check(got_error, "late refresh command should not hide timeout");
+}
+
 static void run_geometry_suite(int colw) {
     test_sequential_read(colw);
     test_interleaved_read(colw);
@@ -335,6 +491,17 @@ static void run_geometry_suite(int colw) {
     test_read_interrupts_write(colw);
     test_precharge_and_auto_precharge(colw);
     test_full_page_auto_precharge_ignored(colw);
+    test_read_auto_precharge_on_interrupt(colw);
+    test_write_auto_precharge_on_interrupt(colw);
+    test_reject_read_without_active_bank(colw);
+    test_reject_write_without_active_bank(colw);
+    test_reject_activate_active_bank(colw);
+    test_reject_mode_register_set_with_active_bank(colw);
+    test_reject_refresh_with_active_bank(colw);
+    test_refresh_window_accepts_64ms(colw);
+    test_refresh_window_rejects_slow_refresh(colw);
+    test_refresh_timeout_without_auto_refresh(colw);
+    test_refresh_timeout_rejects_late_refresh(colw);
 }
 
 int main() {
@@ -345,6 +512,9 @@ int main() {
         return 0;
     } catch( const exception& e ) {
         cerr << "FAIL: " << e.what() << '\n';
+        return 1;
+    } catch( const char* e ) {
+        cerr << "FAIL: " << e << '\n';
         return 1;
     }
 }

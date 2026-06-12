@@ -48,10 +48,6 @@
     #define _JTFRAME_COLORW 4
 #endif
 
-#ifndef _JTFRAME_GAMEPLL
-    #define _JTFRAME_GAMEPLL "jtframe_pll6000"
-#endif
-
 using namespace std;
 
 #ifndef _JTFRAME_SIM_DIPS
@@ -110,8 +106,8 @@ protected:
 public:
     MultiClock(UUT& g) : game(g) {
         cnt=0;
-#ifdef _JTFRAME_PLL
-        semi = (vluint64_t)(1e12/(16.0*_JTFRAME_PLL*1000.0));
+#ifdef _JTFRAME_MCLK
+        semi = (vluint64_t)(1e12/(_JTFRAME_MCLK));
 #else
         semi = (vluint64_t)10416;
 #endif
@@ -638,7 +634,7 @@ void JTSim::clock(int n) {
         multi_clock->advance_half_period();
         game.eval();
         if( game.contextp()->gotFinish() ) return;
-        sdram.update();
+        sdram.update(simtime + multi_clock->get_semi_period());
         dwn.update();
         if( !cur_dwn && last_dwnd ) {
             fprintf(stderr,"\nROM file transfered (frame %d)\n",frame_cnt);
@@ -660,7 +656,7 @@ void JTSim::clock(int n) {
         multi_clock->advance_half_period();
         game.eval();
         if( game.contextp()->gotFinish() ) return;
-        sdram.update();
+        sdram.update(simtime + multi_clock->get_semi_period());
         simtime += multi_clock->get_semi_period();
         ticks++;
 
