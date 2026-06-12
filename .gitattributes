@@ -1,3 +1,11 @@
 *.kicad_sch merge=custom-no-merge
 *.kicad_sym merge=custom-no-merge
 *.kicad* merge=custom-no-merge
+# [MiSTer-DB9 BEGIN] - freeze upstream workflow files on merge
+# The default GITHUB_TOKEN used by sync-jotego-upstream.yaml cannot push
+# .github/workflows/* changes, so keep our version of any workflow file
+# upstream edits (the sync workflow registers merge.ours.driver and also
+# drops upstream-added workflow files post-merge). These files are disabled
+# via the Actions API regardless, so their content is irrelevant here.
+.github/workflows/* merge=ours
+# [MiSTer-DB9 END]

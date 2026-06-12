@@ -41,12 +41,6 @@ jobs:
           ref: master
           fetch-depth: 0
           persist-credentials: true
-          # Default GITHUB_TOKEN cannot push .github/workflows/* changes
-          # (no `workflows` scope exists on it). Jotego upstream periodically
-          # edits its own in-tree workflow files (e.g. compile-all.yaml), and
-          # those edits ride the merge into master, so the push must carry a
-          # PAT with `workflow` scope. Reuse the repo's existing PAT secret.
-          token: ${{ secrets.PAT }}
 
       - name: Configure git identity
         run: |
@@ -57,6 +51,15 @@ jobs:
           # commit, handled in "Merge upstream").
           git config rerere.enabled true
           git config rerere.autoupdate true
+          # merge=ours driver for .github/workflows/* (see .gitattributes):
+          # the default GITHUB_TOKEN cannot push .github/workflows/* changes
+          # (GitHub blocks it; no workflows scope on that token), so upstream
+          # edits to jotego's in-tree workflow files must never enter our merge.
+          # `ours` keeps our version with no conflict; the post-merge freeze in
+          # "Merge upstream" additionally drops any workflow file upstream adds.
+          # These files are disabled via the Actions API anyway, so content is
+          # irrelevant.
+          git config merge.ours.driver true
 
       - name: Fetch jotego upstream
         run: |
@@ -155,6 +158,9 @@ jobs:
         if: steps.detect.outputs.behind != '0'
         run: |
           RSHA='${{ steps.release.outputs.released_sha }}'
+          # Pre-merge master tip — the freeze step below resets the workflow dir
+          # back to exactly this state.
+          BEFORE=$(git rev-parse HEAD)
           # Mirror the per-core fork strategy: ignore whitespace-only diffs to
           # tolerate jotego's occasional reformatting churn.
           if git merge -Xignore-all-space --no-edit \
@@ -178,6 +184,28 @@ jobs:
               exit 1
             fi
           fi
+
+          # [MiSTer-DB9 BEGIN] - freeze .github/workflows to our pre-merge version
+          # The default GITHUB_TOKEN cannot push .github/workflows/* changes, so
+          # the merged tree must carry zero workflow-file diff vs BEFORE.
+          # merge=ours (see .gitattributes) already keeps our content for files
+          # upstream *edits*; this also drops any workflow file upstream *adds*
+          # (merge=ours doesn't apply to adds). Idempotent no-op when the merge
+          # touched no workflow file. Jotego's workflows are disabled via the
+          # Actions API regardless, so freezing their content costs nothing.
+          if ! git diff --quiet "$BEFORE" HEAD -- .github/workflows; then
+            # Restore edited/deleted workflow files to our version (staged).
+            git checkout "$BEFORE" -- .github/workflows
+            # Drop workflow files upstream added that we never had.
+            git ls-files .github/workflows | while read -r f; do
+              git cat-file -e "${BEFORE}:${f}" 2>/dev/null || git rm -qf "$f"
+            done
+            git commit --amend --no-edit
+            echo "Froze .github/workflows to pre-merge tip ${BEFORE}."
+          else
+            echo "Merge touched no workflow files; nothing to freeze."
+          fi
+          # [MiSTer-DB9 END]
 
       # [MiSTer-DB9-Pro BEGIN] - post-merge guards: marker balance + key-gate regression
       - name: Marker + key-gate regression guards
