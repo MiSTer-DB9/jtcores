@@ -41,6 +41,12 @@ jobs:
           ref: master
           fetch-depth: 0
           persist-credentials: true
+          # Default GITHUB_TOKEN cannot push .github/workflows/* changes
+          # (no `workflows` scope exists on it). Jotego upstream periodically
+          # edits its own in-tree workflow files (e.g. compile-all.yaml), and
+          # those edits ride the merge into master, so the push must carry a
+          # PAT with `workflow` scope. Reuse the repo's existing PAT secret.
+          token: ${{ secrets.PAT }}
 
       - name: Configure git identity
         run: |
