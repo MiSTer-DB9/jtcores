@@ -21,7 +21,8 @@ localparam [25:0] BA2_START  =`ifdef JTFRAME_BA2_START  `JTFRAME_BA2_START  `els
 localparam [25:0] BA3_START  =`ifdef JTFRAME_BA3_START  `JTFRAME_BA3_START  `else 26'd0 `endif;
 localparam [25:0] PROM_START =`ifdef JTFRAME_PROM_START `JTFRAME_PROM_START `else 26'd0 `endif;
 localparam [25:0] HEADER_LEN =`ifdef JTFRAME_HEADER     `JTFRAME_HEADER     `else 26'd0 `endif;
-localparam        SDRAMW     =`ifdef JTFRAME_SDRAM_LARGE 24 `else 23 `endif;
+localparam        SDRAMW     =`ifdef JTFRAME_SDRAM_XL 25 `elsif JTFRAME_SDRAM_LARGE 24 `else 23 `endif;
+localparam        IOCTL_AW   =`ifdef JTFRAME_SDRAM_XL 27 `else 26 `endif;
 /* verilator lint_on WIDTH */
 
 {{ range .Params }}
@@ -36,7 +37,7 @@ wire [7:0] ioctl_aux;
 `endif
 {{- range $k, $v := .Ioctl.Buses }}{{ if $v.Name}}
 wire [{{$v.DW}}-1:0] {{$v.Name}}_dimx;
-wire [  1:0] {{$v.Name}}_wemx;{{if $v.Amx}}
+wire [{{sub (byte_en_width $v.DW) 1}}:0] {{$v.Name}}_wemx;{{if $v.Amx}}
 wire [{{$v.AW}}-1:{{$v.AWl}}] {{$v.Amx}};{{ end }}{{end -}}
 {{end}}{{end}}
 
@@ -86,7 +87,7 @@ assign {{.Name}}_flush_done = {{.Name}}_flush;
 wire        prom_we, header;
 wire [SDRAMW-2:0] raw_addr, post_addr;
 wire [SDRAMW-2:0] ioctl_prog_addr   = ioctl_addr[SDRAMW-2:0];
-wire [25:0] pre_addr, dwnld_addr, ioctl_addr_noheader;
+wire [IOCTL_AW-1:0] pre_addr, dwnld_addr, ioctl_addr_noheader;
 wire [ 7:0] post_data;
 wire [15:0] raw_data;
 wire [ 7:0] pcb_id;
@@ -307,12 +308,21 @@ jt{{if .Game}}{{.Game}}{{else}}{{.Core}}{{end}}_game u_game(
     .ln_vs       ( ln_vs         ),
     .ln_lvbl     ( ln_lvbl       ),
     .ln_we       ( ln_we         ),
+`ifdef JTFRAME_LF_ZOOM
+    .h_step      ( h_step        ),
+    .v_step      ( v_step        ),
+`endif
 `endif
     .gfx_en      ( gfx_en        )
 );
 /* verilator tracing_off */
 assign dwnld_busy = ioctl_rom | prom_we; // prom_we is really just for sims
 assign dwnld_addr = {{if .Download.Pre_addr }}pre_addr{{else}}ioctl_addr{{end}};
+`ifdef JTFRAME_SDRAM_XL
+wire [26:0] dwnld_addr_wide = dwnld_addr;
+`else
+wire [26:0] dwnld_addr_wide = {1'b0,dwnld_addr};
+`endif
 assign prog_addr = {{if .Download.Post_addr }}post_addr{{else}}raw_addr{{end}};
 assign prog_data = {{if .Download.Post_data }}{2{post_data}}{{else}}raw_data{{end}};
 assign gfx4_en   = {{ .Gfx4 }}
@@ -328,8 +338,12 @@ jtframe_dwnld #(
     .HEADER    ( `JTFRAME_HEADER   ),
 `endif{{ if .Balut }}
     .BALUT      ( {{.Balut}}    ),  // Using offsets in header for
+    .BALUT_LEN  ( {{.BalutEntries}} ),
     .LUTSH      ( {{.Lutsh}}    ),  // bank assignment
     .BALUT_REVERSE( {{if .BalutReverse}}1{{else}}0{{end}} ),
+`ifdef JTFRAME_SDRAM_XL
+    .XL         ( 1 ),
+`endif
 {{else}}
 `ifdef JTFRAME_BA1_START
     .BA1_START ( BA1_START ),
@@ -349,7 +363,7 @@ jtframe_dwnld #(
 ) u_dwnld(
     .clk          ( clk            ),
     .ioctl_rom    ( ioctl_dwn      ),
-    .ioctl_addr   ( dwnld_addr     ),
+    .ioctl_addr   ( dwnld_addr_wide),
     .ioctl_dout   ( ioctl_dout     ),
     .ioctl_wr     ( ioctl_wr       ),
     .gfx4_en      ( gfx4_en        ),
@@ -392,6 +406,7 @@ jtframe_cache_mux #(
     .BLKSIZE{{$index}} ( {{ $line.Blocks.Size_bytes }} ),
     .DW{{$index}}      ( {{ printf "%2d" $line.Data_width }} ),
     .BA{{$index}}      ( {{ if $line.Full_range }}0{{ else }}{{ $line.At.Bank }}{{ end }} ),
+    .CHIP{{$index}}    ( {{ if $line.Full_range }}0{{ else }}{{ $line.At.Chip }}{{ end }} ),
     .OFFSET{{$index}}  ( {{ if and (not $line.Full_range) $line.At.Offset }}{{ $line.At.Offset }}{{ else }}0{{ end }} ),
     .INVAL_MASK{{$index}} ( {{ cache_inval_mask $.SDRAM.Cache_lanes $index }} ){{- end }}
 ) u_cache(

@@ -74,6 +74,7 @@ module SH7604
 	input             FAST,
 
 	input             CPS3_DECRYPT,
+	input             CPS3_ALT_DECRYPT,
 	input      [31:0] CPS3_KEY1,
 	input      [31:0] CPS3_KEY2
 	
@@ -96,7 +97,7 @@ module SH7604
 	bit        CBUS_REQ;
 	bit        CBUS_ID;
 	bit        CBUS_TAS;
-	wire       CBUS_CACHE_DATA_REQ = CBUS_REQ && (CBUS_A[31:29] == 3'b110);
+	wire       CBUS_CACHE_DATA_REQ = CBUS_REQ && (CBUS_A[31:29] == 3'b110 || CBUS_A[31:29] == 3'b100);
 	
 	bit [31:0] IBUS_A;
 	bit [31:0] IBUS_DO;
@@ -333,6 +334,7 @@ module SH7604
 		.IBUS_LOCK(IBUS_LOCK),
 		.IBUS_WAIT(IBUS_WAIT),
 		.CPS3_DECRYPT(CPS3_DECRYPT),
+		.CPS3_ALT_DECRYPT(CPS3_ALT_DECRYPT),
 		.CPS3_KEY1(CPS3_KEY1),
 		.CPS3_KEY2(CPS3_KEY2)
 	);

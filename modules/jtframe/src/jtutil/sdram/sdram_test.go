@@ -282,6 +282,101 @@ func TestBankOffsetReadsReversedHeaderEntries(t *testing.T) {
 	}
 }
 
+func TestBankOffsetSkipsHeaderEntryZeroForBankLUT(t *testing.T) {
+	macros.MakeFromMap(map[string]string{
+		"JTFRAME_HEADER": "32",
+	})
+	rom := make([]byte, 0x2C80020)
+	copy(rom, []byte{
+		0x00, 0x08, // dummy/base: 0x0008 << 16 = 0x0080000
+		0x00, 0x88, // BA1:        0x0088 << 16 = 0x0880000
+		0x01, 0x88, // BA2:        0x0188 << 16 = 0x1880000
+		0x02, 0x88, // BA3:        0x0288 << 16 = 0x2880000
+		0x02, 0xC8, // end:        0x02C8 << 16 = 0x2C80000
+		0x02, 0xC8, // future expansion entry; ignored by bank split
+	})
+	hinfo := mra.HeaderOffset{
+		Bits:    16,
+		Reverse: false,
+		Start:   0,
+		Regions: []string{"simm1.0", "simm3.0", "simm4.0", "simm5.0", "simm2.0", "simm6.0"},
+	}
+
+	offsets, _, err := bankOffset(len(hinfo.Regions), hinfo, rom)
+	if err != nil {
+		t.Fatalf("bankOffset returned error: %v", err)
+	}
+	if got, want := offsets[1], 0x0880000+32; got != want {
+		t.Fatalf("bank 1 offset mismatch: got=%#x want=%#x", got, want)
+	}
+	if got, want := offsets[2], 0x1880000+32; got != want {
+		t.Fatalf("bank 2 offset mismatch: got=%#x want=%#x", got, want)
+	}
+	if got, want := offsets[3], 0x2880000+32; got != want {
+		t.Fatalf("bank 3 offset mismatch: got=%#x want=%#x", got, want)
+	}
+	if got, want := offsets[4], len(rom); got != want {
+		t.Fatalf("end offset mismatch: got=%#x want=%#x", got, want)
+	}
+}
+
+func TestBankEndOffsetEndsLastDeclaredBankAtProm(t *testing.T) {
+	offsets := []int{0, 0x30004, 0x38004, 0x90004, 0xc0004}
+	if got, want := bankEndOffset(0, 3, offsets, offsets[4]), offsets[1]; got != want {
+		t.Fatalf("bank 0 end mismatch: got=%#x want=%#x", got, want)
+	}
+	if got, want := bankEndOffset(1, 3, offsets, offsets[4]), offsets[2]; got != want {
+		t.Fatalf("bank 1 end mismatch: got=%#x want=%#x", got, want)
+	}
+	if got, want := bankEndOffset(2, 3, offsets, offsets[4]), offsets[4]; got != want {
+		t.Fatalf("last declared bank end mismatch: got=%#x want=%#x", got, want)
+	}
+}
+
+func TestBankEndOffsetUsesPromForSingleBankCore(t *testing.T) {
+	offsets := []int{0, 0x200000, 0x200000, 0x200000, 0x128000}
+	if got, want := bankEndOffset(0, 1, offsets, offsets[4]), offsets[4]; got != want {
+		t.Fatalf("single bank end mismatch: got=%#x want=%#x", got, want)
+	}
+}
+
+func TestBankEndOffsetCapsNextBankAtProm(t *testing.T) {
+	offsets := []int{0, 0x40008, 0x340008, 0x3e0008, 0x3d0008}
+	if got, want := bankEndOffset(2, 4, offsets, offsets[4]), offsets[4]; got != want {
+		t.Fatalf("bank before PROM end mismatch: got=%#x want=%#x", got, want)
+	}
+	if got, want := bankEndOffset(3, 4, offsets, offsets[4]), offsets[4]; got != want {
+		t.Fatalf("blank bank after PROM end mismatch: got=%#x want=%#x", got, want)
+	}
+}
+
+func TestSdramDumpBankCountUsesDeclaredBanks(t *testing.T) {
+	cfg := &mem.MemConfig{}
+	cfg.SDRAM.Banks = make([]mem.SDRAMBank, 3)
+	if got, want := sdramDumpBankCount(cfg, []int{0, 1, 2, 3, 4, 5}, 8, 8), 3; got != want {
+		t.Fatalf("declared bank count mismatch: got=%d want=%d", got, want)
+	}
+}
+
+func TestSdramDumpBankCountUsesHeaderOffsetsForCacheLanes(t *testing.T) {
+	cfg := &mem.MemConfig{}
+	cfg.SDRAM.Cache_lanes = []mem.SDRAMCacheLine{{
+		Name: "simm2",
+		At:   mem.SDRAMCacheAddr{Defined: true, Bank: 0, Chip: 1},
+	}}
+	if got, want := sdramDumpBankCount(cfg, []int{0, 1, 2, 3, 4, 5}, 8, 8), 6; got != want {
+		t.Fatalf("cache-lane header-offset bank count mismatch: got=%d want=%d", got, want)
+	}
+}
+
+func TestSdramDumpBankCountUsesFullRangeForCacheLanes(t *testing.T) {
+	cfg := &mem.MemConfig{}
+	cfg.SDRAM.Cache_lanes = []mem.SDRAMCacheLine{{Name: "gfxdma"}}
+	if got, want := sdramDumpBankCount(cfg, []int{0, 1, 2, 3, 4, 5}, 8, 8), 8; got != want {
+		t.Fatalf("full-range cache-lane bank count mismatch: got=%d want=%d", got, want)
+	}
+}
+
 func TestRemapAddressBitsHvvvx(t *testing.T) {
 	macros.MakeFromMap(map[string]string{"JTFRAME_HEADER": "0"})
 	gfx, err := parseGfxPattern("hvvvx")
@@ -343,17 +438,40 @@ func TestApplyGfxSortRangeHvvvv(t *testing.T) {
 }
 
 func TestShouldApplyGfxEn(t *testing.T) {
-	if !shouldApplyGfxEn("not_higemaru", "1942") {
+	if !shouldApplyGfxEn("not_higemaru", "1942", nil, nil) {
 		t.Fatalf("not_higemaru should apply for game 1942")
 	}
-	if shouldApplyGfxEn("not_higemaru", "higemaru") {
+	if shouldApplyGfxEn("not_higemaru", "higemaru", nil, nil) {
 		t.Fatalf("not_higemaru should not apply for game higemaru")
 	}
-	if shouldApplyGfxEn("metrocrs", "rthunder") {
+	if shouldApplyGfxEn("metrocrs", "rthunder", nil, nil) {
 		t.Fatalf("metrocrs should not apply for game rthunder")
 	}
-	if !shouldApplyGfxEn("metrocrs", "metrocrs") {
+	if !shouldApplyGfxEn("metrocrs", "metrocrs", nil, nil) {
 		t.Fatalf("metrocrs should apply for game metrocrs")
+	}
+}
+
+func TestShouldApplyGfxEnUsesHeaderRegister(t *testing.T) {
+	regs := []mra.HeaderReg{{Name: "metrocrs", Pos: "2[3]"}}
+	rom := []byte{0, 0, 0x08}
+	if !shouldApplyGfxEn("metrocrs", "aliensec", rom, regs) {
+		t.Fatalf("metrocrs header bit should apply for aliensec")
+	}
+	rom[2] = 0
+	if shouldApplyGfxEn("metrocrs", "metrocrs", rom, regs) {
+		t.Fatalf("cleared metrocrs header bit should override setname fallback")
+	}
+}
+
+func TestReadHeaderRegisterMultiPart(t *testing.T) {
+	rom := []byte{0, 0, 0x80, 0x34}
+	got, err := readHeaderRegister("2[7],3[7:0]", rom)
+	if err != nil {
+		t.Fatalf("readHeaderRegister returned error: %v", err)
+	}
+	if want := 0x134; got != want {
+		t.Fatalf("header register value mismatch: got=%#x want=%#x", got, want)
 	}
 }
 
@@ -516,6 +634,99 @@ func TestApplySimFileRejectsWrongSize(t *testing.T) {
 	if !strings.Contains(err.Error(), "must be 4 bytes") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestSdramBankNameUsesSecondChipPrefix(t *testing.T) {
+	cases := map[int]string{
+		0: "sdram_bank0.bin",
+		3: "sdram_bank3.bin",
+		4: "sdram2_bank0.bin",
+		7: "sdram2_bank3.bin",
+	}
+	for bank, want := range cases {
+		if got := sdramBankName(bank); got != want {
+			t.Fatalf("wrong bank name for %d: got=%q want=%q", bank, got, want)
+		}
+	}
+}
+
+func TestValidateSimBoundsRejectsSecondChipWithoutXL(t *testing.T) {
+	macros.MakeFromMap(nil)
+	err := validateSimBoundsChip(0, 1, 0, 1024, "cache-lane", "tiles")
+	if err == nil {
+		t.Fatal("Expected second SDRAM chip to require JTFRAME_SDRAM_XL")
+	}
+	if !strings.Contains(err.Error(), "JTFRAME_SDRAM_XL") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateSimBoundsAcceptsSecondChipWithXL(t *testing.T) {
+	macros.MakeFromMap(map[string]string{"JTFRAME_SDRAM_XL": ""})
+	if err := validateSimBoundsChip(3, 1, 0, 16*1024*1024, "cache-lane", "tiles"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMakeSymlinkLinksNvramToRestoreBramNames(t *testing.T) {
+	dir := t.TempDir()
+	restore := chdir(t, dir)
+	defer restore()
+
+	jtroot := filepath.Join(dir, "jtroot")
+	mustMkdirAll(t, filepath.Join(jtroot, "rom"))
+	t.Setenv("JTROOT", jtroot)
+	if err := os.WriteFile(filepath.Join(jtroot, "rom", "JOJON.RAM"), []byte{1, 2, 3, 4}, 0664); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	cfg := &mem.MemConfig{
+		BRAM: []mem.BRAMBus{
+			{Name: "eeprom", Ioctl: mem.BRAMBus_Ioctl{Restore: true}},
+			{Name: "shadow", Ioctl: mem.BRAMBus_Ioctl{Save: true}},
+		},
+	}
+	if err := makeSymlink(cfg, "jojon"); err != nil {
+		t.Fatalf("makeSymlink returned error: %v", err)
+	}
+
+	wantRam := filepath.Join(jtroot, "rom", "JOJON.RAM")
+	if got, err := os.Readlink("nvram.bin"); err != nil || got != wantRam {
+		t.Fatalf("nvram.bin link mismatch: got=%q err=%v", got, err)
+	}
+	if got, err := os.Readlink("eeprom.bin"); err != nil || got != wantRam {
+		t.Fatalf("eeprom.bin link mismatch: got=%q err=%v", got, err)
+	}
+	if _, err := os.Lstat("shadow.bin"); !os.IsNotExist(err) {
+		t.Fatalf("save-only BRAM should not be linked, stat err=%v", err)
+	}
+	wantRom := filepath.Join(jtroot, "rom", "jojon.rom")
+	if got, err := os.Readlink("rom.bin"); err != nil || got != wantRom {
+		t.Fatalf("rom.bin link mismatch: got=%q err=%v", got, err)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe failed: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	os.Stdout = old
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stdout pipe failed: %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("read stdout pipe failed: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close read pipe failed: %v", err)
+	}
+	return buf.String()
 }
 
 func intsToBytes(ref []int) []byte {

@@ -35,6 +35,23 @@ func Test_make_clocks_pll5369_sdram96(t *testing.T) {
 	}
 }
 
+func Test_make_clocks_pll7000_sdram96(t *testing.T) {
+	MakeFromMap(map[string]string{
+		"JTFRAME_PLL":     "jtframe_pll7000",
+		"JTFRAME_SDRAM96": "1",
+	})
+	mclk := make_clocks("MISTER")
+	if mclk != 112000000 {
+		t.Fatalf("Bad JTFRAME_MCLK for jtframe_pll7000 with SDRAM96. Got %d", mclk)
+	}
+	if got := Get("JTFRAME_MCLK"); got != "112000000" {
+		t.Fatalf("Bad JTFRAME_MCLK macro. Got %s", got)
+	}
+	if !IsSet("JTFRAME_PLL7000") {
+		t.Fatal("Expected JTFRAME_PLL7000 macro to be set")
+	}
+}
+
 func Test_uses_sdram_cache(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("JTROOT", root)
@@ -60,6 +77,8 @@ func Test_check_macros_lf_buffer_ddrload_mister(t *testing.T) {
 	MakeFromMap(map[string]string{
 		"TARGET":             "mister",
 		"JTFRAME_LF_BUFFER":  "1",
+		"JTFRAME_LF_HW":      "9",
+		"JTFRAME_LF_VW":      "8",
 		"JTFRAME_MR_DDRLOAD": "1",
 		"JTFRAME_WIDTH":      "320",
 		"JTFRAME_HEIGHT":     "224",
@@ -73,11 +92,39 @@ func Test_check_macros_lf_buffer_vertical(t *testing.T) {
 	MakeFromMap(map[string]string{
 		"TARGET":            "mister",
 		"JTFRAME_LF_BUFFER": "1",
+		"JTFRAME_LF_HW":     "9",
+		"JTFRAME_LF_VW":     "8",
 		"JTFRAME_VERTICAL":  "1",
 		"JTFRAME_WIDTH":     "320",
 		"JTFRAME_HEIGHT":    "224",
 	})
 	if err := CheckMacros(); err == nil {
 		t.Fatal("Expected vertical lf-buffer combination to be rejected")
+	}
+}
+
+func Test_check_macros_rejects_sdram_xl_and_large(t *testing.T) {
+	MakeFromMap(map[string]string{
+		"TARGET":              "mister",
+		"JTFRAME_SDRAM_XL":    "1",
+		"JTFRAME_SDRAM_LARGE": "1",
+		"JTFRAME_WIDTH":       "320",
+		"JTFRAME_HEIGHT":      "224",
+	})
+	if err := CheckMacros(); err == nil {
+		t.Fatal("Expected JTFRAME_SDRAM_XL with JTFRAME_SDRAM_LARGE to be rejected")
+	}
+}
+
+func Test_check_macros_rejects_sdram_xl_ba_start(t *testing.T) {
+	MakeFromMap(map[string]string{
+		"TARGET":             "mister",
+		"JTFRAME_SDRAM_XL":   "1",
+		"JTFRAME_BA1_START":  "0x100000",
+		"JTFRAME_WIDTH":      "320",
+		"JTFRAME_HEIGHT":     "224",
+	})
+	if err := CheckMacros(); err == nil {
+		t.Fatal("Expected JTFRAME_SDRAM_XL with JTFRAME_BA1_START to be rejected")
 	}
 }

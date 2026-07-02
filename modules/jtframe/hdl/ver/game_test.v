@@ -73,7 +73,11 @@ module game_test(
     output          dwnld_busy,
 
     // ROM LOAD
+`ifdef JTFRAME_SDRAM_XL
+    input   [26:0]  ioctl_addr,
+`else
     input   [25:0]  ioctl_addr,
+`endif
     input   [ 7:0]  ioctl_dout,
     input           ioctl_wr,
     input           ioctl_ram,
@@ -116,15 +120,15 @@ module game_test(
     // input  [21:0]   SDRAM_BA_ADDR3,
 
     // JTFRAME_LF_BUFFER
-    // output   [ 7:0] game_vrender,
-    // output   [ 8:0] game_hdump,
-    // output   [ 8:0] ln_addr,
+    // output   [`JTFRAME_LF_VW-1:0] game_vrender,
+    // output   [`JTFRAME_LF_HW-1:0] game_hdump,
+    // output   [`JTFRAME_LF_HW-1:0] ln_addr,
     // output   [15:0] ln_data,
     // output          ln_done,
     // input           ln_hs,
     // input    [15:0] ln_dout,
     // input    [15:0] ln_pxl,
-    // input    [ 7:0] ln_v,
+    // input    [`JTFRAME_LF_VW-1:0] ln_v,
     // output          ln_we,
 
     // Debug
@@ -135,7 +139,9 @@ module game_test(
     output  [7:0]   debug_view
 );
 
-`ifdef JTFRAME_SDRAM_LARGE
+`ifdef JTFRAME_SDRAM_XL
+    localparam SDRAMW=24; // 128 MB
+`elsif JTFRAME_SDRAM_LARGE
     localparam SDRAMW=23; // 64 MB
 `else
     localparam SDRAMW=22; // 32 MB
@@ -324,16 +330,19 @@ jtframe_sdram_stats_sim #(.AW(SDRAMW)) u_stats(
     /* verilator tracing_off */
 `endif
 `ifdef JTFRAME_LF_BUFFER
-        wire  [ 7:0] game_vrender;
-        wire  [ 8:0] game_hdump;
-        wire  [ 8:0] ln_addr;
+        wire  [`JTFRAME_LF_VW-1:0] game_vrender;
+        wire  [`JTFRAME_LF_HW-1:0] game_hdump;
+        wire  [`JTFRAME_LF_HW-1:0] ln_addr;
         wire  [15:0] ln_data;
         wire         ln_done;
         wire         ln_hs, ln_vs, ln_lvbl;
         wire  [15:0] ln_dout;
         wire  [15:0] ln_pxl;
-        wire  [ 7:0] ln_v;
+        wire  [`JTFRAME_LF_VW-1:0] ln_v;
         wire         ln_we;
+`ifdef JTFRAME_LF_ZOOM
+    wire [ 8:0] game_h_step, game_v_step;
+`endif
 
     `ifdef POCKET
         wire [21:16] cr_addr;
@@ -347,7 +356,7 @@ jtframe_sdram_stats_sim #(.AW(SDRAMW)) u_stats(
         wire         cr_wait;
         wire         cr_wen;
 
-        jtframe_lfbuf_cram u_lf_buf(
+        jtframe_lfbuf_cram #(.HW(`JTFRAME_LF_HW),.VW(`JTFRAME_LF_VW)) u_lf_buf(
             .rst        ( rst           ),
             .clk        ( clk_rom       ),
             .clk48      ( clk48         ),
@@ -371,6 +380,13 @@ jtframe_sdram_stats_sim #(.AW(SDRAMW)) u_stats(
             .ln_vs      ( ln_vs         ),
             .ln_lvbl    ( ln_lvbl       ),
             .ln_we      ( ln_we         ),
+`ifdef JTFRAME_LF_ZOOM
+            .h_step     ( game_h_step   ),
+            .v_step     ( game_v_step   ),
+`else
+            .h_step     ( 9'h100        ),
+            .v_step     ( 9'h100        ),
+`endif
 
             // PSRAM chip 0
             .cr_addr    ( cr_addr       ),
@@ -417,7 +433,7 @@ jtframe_sdram_stats_sim #(.AW(SDRAMW)) u_stats(
             .we           ( DDRAM_WE      )
         );
 
-        jtframe_lfbuf_ddr u_lf_buf(
+        jtframe_lfbuf_ddr #(.HW(`JTFRAME_LF_HW),.VW(`JTFRAME_LF_VW)) u_lf_buf(
             .rst        ( rst           ),
             .clk        ( clk_rom       ),
             .pxl_cen    ( pxl_cen       ),
@@ -440,6 +456,13 @@ jtframe_sdram_stats_sim #(.AW(SDRAMW)) u_stats(
             .ln_vs      ( ln_vs         ),
             .ln_lvbl    ( ln_lvbl       ),
             .ln_we      ( ln_we         ),
+`ifdef JTFRAME_LF_ZOOM
+            .h_step     ( game_h_step   ),
+            .v_step     ( game_v_step   ),
+`else
+            .h_step     ( 9'h100        ),
+            .v_step     ( 9'h100        ),
+`endif
 
             .ddram_clk  ( DDRAM_CLK     ),
             .ddram_busy ( DDRAM_BUSY    ),
@@ -616,6 +639,10 @@ u_game(
     .ln_vs       ( ln_vs          ),
     .ln_lvbl     ( ln_lvbl        ),
     .ln_we       ( ln_we          ),
+`ifdef JTFRAME_LF_ZOOM
+    .h_step      ( game_h_step    ),
+    .v_step      ( game_v_step    ),
+`endif
 `endif
 
     // sound

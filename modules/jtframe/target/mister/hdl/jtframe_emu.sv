@@ -175,7 +175,9 @@ module emu
     `endif
 );
 
-`ifdef JTFRAME_SDRAM_LARGE
+`ifdef JTFRAME_SDRAM_XL
+    localparam SDRAMW=24; // 128 MB
+`elsif JTFRAME_SDRAM_LARGE
     localparam SDRAMW=23; // 64 MB
 `else
     localparam SDRAMW=22; // 32 MB
@@ -396,8 +398,8 @@ assign AUDIO_S = `JTFRAME_SIGNED_SND;
 `endif
 
 // Line-Frame buffer
-wire [ 8:0] game_hdump,   ln_addr;
-wire [ 7:0] game_vrender, ln_v;
+wire [`JTFRAME_LF_HW-1:0] game_hdump,   ln_addr;
+wire [`JTFRAME_LF_VW-1:0] game_vrender, ln_v;
 wire        ln_done, ln_hs, ln_vs, ln_lvbl, ln_we;
 wire [15:0] ln_dout, ln_pxl, ln_data;
 
@@ -465,6 +467,10 @@ u_frame(
     .ln_vs          ( ln_vs          ),
     .ln_lvbl        ( ln_lvbl        ),
     .ln_we          ( ln_we          ),
+`ifdef JTFRAME_LF_ZOOM
+    .game_h_step    ( game_h_step    ),
+    .game_v_step    ( game_v_step    ),
+`endif
 
     `ifdef JTFRAME_VERTICAL
     // Screen rotation

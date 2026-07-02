@@ -32,9 +32,23 @@ import (
 
 var verbose bool
 var size_re = regexp.MustCompile(`^(\d+)(?:\s*(B|k|kB|M|MB))?$`)
+var header_reg_re = regexp.MustCompile(`^([0-9]+)\[([0-7]):?([0-7])?\]$`)
+
+type RunOptions struct {
+	ApplySim bool
+	Target   string
+	Undef    []string
+}
 
 func Run(args []string, v, apply_sim bool) error {
+	return RunWithOptions(args, v, RunOptions{ApplySim: apply_sim})
+}
+
+func RunWithOptions(args []string, v bool, opts RunOptions) error {
 	verbose = v
+	if opts.Target == "" {
+		opts.Target = "mister"
+	}
 	var game string
 	if len(args) != 0 {
 		game = args[0]
@@ -52,7 +66,11 @@ func Run(args []string, v, apply_sim bool) error {
 	if err != nil {
 		return err
 	}
-	macros.MakeMacros(core, "mist")
+	macros.MakeMacros(core, opts.Target)
+	macros.Remove(opts.Undef...)
+	if err := macros.CheckMacros(); err != nil {
+		return err
+	}
 	memCfg, err := parseMemConfig(core)
 	if err != nil {
 		return err
@@ -60,12 +78,12 @@ func Run(args []string, v, apply_sim bool) error {
 	if err := extractSDRAM(memCfg, core, game); err != nil {
 		return err
 	}
-	if apply_sim {
+	if opts.ApplySim {
 		if err := applySimFiles(memCfg); err != nil {
 			return err
 		}
 	}
-	if err := makeSymlink(game); err != nil {
+	if err := makeSymlink(memCfg, game); err != nil {
 		return err
 	}
 	return nil
@@ -162,52 +180,43 @@ func extractSDRAM(memCfg *mem.MemConfig, core, game string) error {
 	if err != nil {
 		return err
 	}
-	if err = applyGfxSort(memCfg, game, rom, offsets); err != nil {
+	if err = applyGfxSort(memCfg, game, rom, offsets, mraCfg.Header.Registers); err != nil {
 		return err
 	}
 	// Swap the bytes so sdram.bin files get written correctly as 16-bit words.
 	swapBytes(rom, 0)
 	header := macros.GetInt("JTFRAME_HEADER")
 	bankFill := sdramBankSize()
-	promStart := offsets[4]
-	nxStart, err := dump("sdram_bank0.bin", rom, header, offsets[1], promStart, bankFill)
-	if err != nil {
-		return fmt.Errorf("%w for bank 0", err)
+	maxBankCount := 4
+	promIdx := 4
+	if macros.IsSet("JTFRAME_SDRAM_XL") {
+		maxBankCount = 8
+		promIdx = 8
 	}
-	if nxStart < 0 {
-		os.Remove("sdram_bank1.bin")
-		os.Remove("sdram_bank2.bin")
-		os.Remove("sdram_bank3.bin")
-		return nil
+	bankCount := sdramDumpBankCount(memCfg, offsets, maxBankCount, promIdx)
+	promStart := len(rom)
+	if promIdx < len(offsets) {
+		promStart = offsets[promIdx]
 	}
-	nxStart, err = dump("sdram_bank1.bin", rom, nxStart, offsets[2], promStart, bankFill)
-	if err != nil {
-		return fmt.Errorf("%w for bank 1", err)
-	}
-	if nxStart < 0 {
-		os.Remove("sdram_bank2.bin")
-		os.Remove("sdram_bank3.bin")
-		return nil
-	}
-	nxStart, err = dump("sdram_bank2.bin", rom, nxStart, offsets[3], promStart, bankFill)
-	if err != nil {
-		return fmt.Errorf("%w for bank 2", err)
-	}
-	if nxStart < 0 {
-		os.Remove("sdram_bank3.bin")
-		fmt.Println("Skippin bank3")
-		return nil
-	}
-	nxStart, err = dump("sdram_bank3.bin", rom, nxStart, 0, promStart, bankFill)
-	if err != nil {
-		return fmt.Errorf("%w for bank 3", err)
+	nxStart := header
+	for bank := 0; bank < bankCount; bank++ {
+		nx := bankEndOffset(bank, bankCount, offsets, promStart)
+		name := sdramBankName(bank)
+		nxStart, err = dump(name, rom, nxStart, nx, promStart, bankFill)
+		if err != nil {
+			return fmt.Errorf("%w for bank %d", err, bank)
+		}
+		if nxStart < 0 {
+			removeStaleBanks(bank + 1)
+			return nil
+		}
 	}
 	// Extra regions (read with prom_we set).
-	if len(reg) > 4 {
+	if len(reg) > promIdx {
 		// Undo the swap needed for the SDRAM part of the ROM file.
-		swapBytes(rom, offsets[4])
+		swapBytes(rom, offsets[promIdx])
 	}
-	for k := 4; k < len(reg); k++ {
+	for k := promIdx; k < len(reg); k++ {
 		nx := 0
 		if k+1 < len(reg) {
 			nx = offsets[k+1]
@@ -219,11 +228,70 @@ func extractSDRAM(memCfg *mem.MemConfig, core, game string) error {
 	return nil
 }
 
+func bankEndOffset(bank, bankCount int, offsets []int, promStart int) int {
+	if bank+1 < bankCount && bank+1 < len(offsets) && offsets[bank+1] < promStart {
+		return offsets[bank+1]
+	}
+	return promStart
+}
+
+func sdramDumpBankCount(cfg *mem.MemConfig, offsets []int, maxBankCount, promIdx int) int {
+	if len(cfg.SDRAM.Banks) > 0 {
+		return clampBankCount(len(cfg.SDRAM.Banks), maxBankCount)
+	}
+	if len(cfg.SDRAM.Cache_lanes) == 0 {
+		return 0
+	}
+	count := len(offsets)
+	if count > promIdx {
+		count = promIdx
+	}
+	for _, line := range cfg.SDRAM.Cache_lanes {
+		if line.At.Defined {
+			laneBank := line.At.Chip*4 + line.At.Bank + 1
+			if laneBank > count {
+				count = laneBank
+			}
+		} else if maxBankCount > count {
+			count = maxBankCount
+		}
+	}
+	return clampBankCount(count, maxBankCount)
+}
+
+func clampBankCount(count, maxBankCount int) int {
+	if count > maxBankCount {
+		return maxBankCount
+	}
+	if count < 0 {
+		return 0
+	}
+	return count
+}
+
+func sdramBankName(bank int) string {
+	if bank < 4 {
+		return fmt.Sprintf("sdram_bank%d.bin", bank)
+	}
+	return fmt.Sprintf("sdram2_bank%d.bin", bank-4)
+}
+
+func removeStaleBanks(first int) {
+	limit := 4
+	if macros.IsSet("JTFRAME_SDRAM_XL") {
+		limit = 8
+	}
+	for bank := first; bank < limit; bank++ {
+		os.Remove(sdramBankName(bank))
+	}
+}
+
 type sim_file_entry struct {
 	kind       string
 	name       string
 	path       string
 	bank       int
+	chip       int
 	offset     int
 	length     int
 	data_width int
@@ -318,7 +386,7 @@ func makeCacheLaneSimFileEntry(resolver *expressionResolver, line mem.SDRAMCache
 	if err != nil {
 		return sim_file_entry{}, false, fmt.Errorf("invalid length for cache-lane %s: %w", line.Name, err)
 	}
-	if err := validateSimBounds(line.At.Bank, offset, length, "cache-lane", line.Name); err != nil {
+	if err := validateSimBoundsChip(line.At.Bank, line.At.Chip, offset, length, "cache-lane", line.Name); err != nil {
 		return sim_file_entry{}, false, err
 	}
 	return sim_file_entry{
@@ -326,6 +394,7 @@ func makeCacheLaneSimFileEntry(resolver *expressionResolver, line mem.SDRAMCache
 		name:       line.Name,
 		path:       simfile,
 		bank:       line.At.Bank,
+		chip:       line.At.Chip,
 		offset:     offset,
 		length:     length,
 		data_width: sim_data_width,
@@ -355,9 +424,19 @@ func resolveSimOffset(resolver *expressionResolver, text, kind, name string) (in
 }
 
 func validateSimBounds(bank, offset, length int, kind, name string) error {
+	return validateSimBoundsChip(bank, 0, offset, length, kind, name)
+}
+
+func validateSimBoundsChip(bank, chip, offset, length int, kind, name string) error {
 	bank_size := sdramBankSize()
 	if bank < 0 || bank > 3 {
 		return fmt.Errorf("%s %s targets invalid SDRAM bank %d", kind, name, bank)
+	}
+	if chip != 0 && !macros.IsSet("JTFRAME_SDRAM_XL") {
+		return fmt.Errorf("%s %s targets SDRAM chip %d, but JTFRAME_SDRAM_XL is not set", kind, name, chip)
+	}
+	if chip < 0 || chip > 1 {
+		return fmt.Errorf("%s %s targets invalid SDRAM chip %d", kind, name, chip)
 	}
 	if offset < 0 || length < 0 {
 		return fmt.Errorf("%s %s uses invalid offset/length", kind, name)
@@ -406,7 +485,7 @@ func applySimFile(each sim_file_entry) (err error) {
 	if byte_swapped, err = swapSimFileData(data, each.data_width, each.big_endian); err != nil {
 		return fmt.Errorf("cannot prepare simfile %s for %s %s: %w", each.path, each.kind, each.name, err)
 	}
-	name := fmt.Sprintf("sdram_bank%d.bin", each.bank)
+	name := sdramBankName(each.chip*4 + each.bank)
 	bank_data, err := readBankFile(name)
 	if err != nil {
 		return err
@@ -416,7 +495,7 @@ func applySimFile(each sim_file_entry) (err error) {
 		return err
 	}
 	if verbose {
-		fmt.Printf("Applied simfile %-16s to bank=%d offset=%X length=%X", each.path, each.bank, each.offset, each.length)
+		fmt.Printf("Applied simfile %-16s to chip=%d bank=%d offset=%X length=%X", each.path, each.chip, each.bank, each.offset, each.length)
 		if byte_swapped {
 			fmt.Printf(" (bytes swapped)")
 		}
@@ -464,7 +543,7 @@ func sdramBankSize() int {
 		eightMB   = 8 * 1024 * 1024
 		sixteenMB = 2 * eightMB
 	)
-	if macros.IsSet("JTFRAME_SDRAM_LARGE") {
+	if macros.IsSet("JTFRAME_SDRAM_LARGE") || macros.IsSet("JTFRAME_SDRAM_XL") {
 		return sixteenMB
 	}
 	return eightMB
@@ -523,7 +602,7 @@ func parseMemConfig(core string) (*mem.MemConfig, error) {
 	return &cfg, nil
 }
 
-func applyGfxSort(cfg *mem.MemConfig, game string, rom []byte, offsets []int) error {
+func applyGfxSort(cfg *mem.MemConfig, game string, rom []byte, offsets []int, regs []mra.HeaderReg) error {
 	if len(cfg.SDRAM.Banks) == 0 {
 		return nil
 	}
@@ -540,7 +619,7 @@ func applyGfxSort(cfg *mem.MemConfig, game string, rom []byte, offsets []int) er
 				continue
 			}
 			if strings.TrimSpace(bus.Gfx_en) != "" {
-				if !shouldApplyGfxEn(bus.Gfx_en, game) {
+				if !shouldApplyGfxEn(bus.Gfx_en, game, rom, regs) {
 					if verbose {
 						fmt.Printf("Skipping conditional gfx_sort %-8s on bus=%s (gfx_sort_en=%s)\n", gfx, bus.Name, bus.Gfx_en)
 					}
@@ -596,10 +675,13 @@ func applyGfxSort(cfg *mem.MemConfig, game string, rom []byte, offsets []int) er
 	return nil
 }
 
-func shouldApplyGfxEn(expr, game string) bool {
+func shouldApplyGfxEn(expr, game string, rom []byte, regs []mra.HeaderReg) bool {
 	name := strings.TrimSpace(strings.ToLower(expr))
 	if name == "" {
 		return true
+	}
+	if value, ok := headerRegisterValue(name, rom, regs); ok {
+		return value != 0
 	}
 	g := strings.ToLower(game)
 	if strings.HasPrefix(name, "not_") {
@@ -607,6 +689,67 @@ func shouldApplyGfxEn(expr, game string) bool {
 		return !strings.Contains(g, term)
 	}
 	return strings.Contains(g, name)
+}
+
+func headerRegisterValue(name string, rom []byte, regs []mra.HeaderReg) (int, bool) {
+	for _, reg := range regs {
+		if strings.ToLower(strings.TrimSpace(reg.Name)) != name {
+			continue
+		}
+		value, err := readHeaderRegister(reg.Pos, rom)
+		return value, err == nil
+	}
+	return 0, false
+}
+
+func readHeaderRegister(pos string, rom []byte) (int, error) {
+	parts := strings.Split(pos, ",")
+	value := 0
+	at := 0
+	for k := len(parts) - 1; k >= 0; k-- {
+		offset, msb, lsb, err := parseHeaderRegisterPart(strings.TrimSpace(parts[k]))
+		if err != nil {
+			return 0, err
+		}
+		if offset < 0 || offset >= len(rom) {
+			return 0, fmt.Errorf("header register offset %d outside ROM length %d", offset, len(rom))
+		}
+		width := msb - lsb + 1
+		mask := (1 << width) - 1
+		chunk := (int(rom[offset]) >> lsb) & mask
+		value |= chunk << at
+		at += width
+	}
+	return value, nil
+}
+
+func parseHeaderRegisterPart(pos string) (offset, msb, lsb int, err error) {
+	chunks := header_reg_re.FindStringSubmatch(pos)
+	if len(chunks) != 4 {
+		return 0, 0, 0, fmt.Errorf("wrong header register position %q", pos)
+	}
+	offset64, err := strconv.ParseInt(chunks[1], 10, 32)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	msb64, err := strconv.ParseInt(chunks[2], 10, 32)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	lsb64 := msb64
+	if chunks[3] != "" {
+		lsb64, err = strconv.ParseInt(chunks[3], 10, 32)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+	}
+	offset = int(offset64)
+	msb = int(msb64)
+	lsb = int(lsb64)
+	if lsb > msb || msb > 7 || lsb < 0 {
+		return 0, 0, 0, fmt.Errorf("invalid header register bit range %q", pos)
+	}
+	return offset, msb, lsb, nil
 }
 
 func bankBounds(bankIdx int, offsets []int, romLen int) (int, int) {
@@ -791,7 +934,7 @@ func dump(name string, rom []byte, p0, p1, lim, fill int) (int, error) {
 	return p1, nil
 }
 
-func makeSymlink(game string) error {
+func makeSymlink(memCfg *mem.MemConfig, game string) error {
 	// Link ROM files.
 	src := filepath.Join(mustEnv("JTROOT"), "rom", game+".rom")
 	os.Remove("rom.bin")
@@ -805,9 +948,20 @@ func makeSymlink(game string) error {
 		return nil // No RAM file.
 	}
 	defer f.Close()
-	os.Remove("nvram.bin")
-	if err := os.Symlink(src, "nvram.bin"); err != nil {
+	if err := linkFile("nvram.bin", src); err != nil {
 		return err
 	}
+	for _, bram := range memCfg.BRAM {
+		if bram.Ioctl.Restore && bram.Name != "" {
+			if err := linkFile(bram.Name+".bin", src); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+func linkFile(dst, src string) error {
+	os.Remove(dst)
+	return os.Symlink(src, dst)
 }

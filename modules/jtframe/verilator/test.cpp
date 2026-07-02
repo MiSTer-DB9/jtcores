@@ -213,17 +213,19 @@ public:
             dut.cab_1p = 0xf;
             dut.coin   = 0xf;
             dut.joystick1    = 0x3ff;
+            dut.joystick2    = 0x3ff;
         }
     }
     void parse_inputs( unsigned v ) {
         v = ~v;
         apply_reset(v);
-        apply_joystick(v);
+        apply_joystick(v, 4,  dut.joystick1);
+        apply_joystick(v, 14, dut.joystick2);
         auto coin_l   = dut.coin&3;
         dut.dip_test  = (v & 0x800) ? 1 : 0;
         dut.service   = (v & 0x002) ? 1 : 0;
         dut.cab_1p    = 0xc | ((v>>2)&3);
-        dut.coin      = 0xe | (v&1);
+        dut.coin      = 0xc | (v&1) | ((v>>12)&2);
         if( coin_l != (dut.coin&3) && coin_l!=3 ) {
             cout << "\ncoin inserted (sim_inputs.hex line " << line << ")\n";
         }
@@ -244,30 +246,30 @@ public:
             dut.rst96=1;
         }
     }
-    void apply_joystick(unsigned v) {
-        dut.joystick1 = 0x30f | ((v>>4)&0xf0);
-        v >>= 4;
-        dut.joystick1    = (dut.joystick1&0xf0) | (v&0xf);
+    void apply_joystick(unsigned v, int shift, decltype(dut.joystick1)& joystick) {
+        joystick = 0x30f | ((v>>shift)&0xf0);
+        v >>= shift;
+        joystick = (joystick&0xf0) | (v&0xf);
 #ifdef _JTFRAME_JOY_LRUD
-        dut.joystick1    = (dut.joystick1&0xf0) | ((v&3)<<2) | ((v>>2)&3);
+        joystick = (joystick&0xf0) | ((v&3)<<2) | ((v>>2)&3);
 #endif
 #ifdef _JTFRAME_JOY_LRDU
-        dut.joystick1    = (dut.joystick1&0xf0) | ((v&3)<<2) | ((v>>3)&1) | ((v>>1)&2);
+        joystick = (joystick&0xf0) | ((v&3)<<2) | ((v>>3)&1) | ((v>>1)&2);
 #endif
 #ifdef _JTFRAME_JOY_RLDU
-        dut.joystick1    = (dut.joystick1&0xf0) | ((v&1)<<3) | ((v&2)<<1) | ((v&4)>>1) | ((v&8)>>3);
+        joystick = (joystick&0xf0) | ((v&1)<<3) | ((v&2)<<1) | ((v&4)>>1) | ((v&8)>>3);
 #endif
 #ifdef _JTFRAME_JOY_RLUD
-        dut.joystick1    = (dut.joystick1&0xf0) | ((v&1)<<3) | ((v&2)<<1) | ((v&4)>>2) | ((v&8)>>2);
+        joystick = (joystick&0xf0) | ((v&1)<<3) | ((v&2)<<1) | ((v&4)>>2) | ((v&8)>>2);
 #endif
 #ifdef _JTFRAME_JOY_DURL
-        dut.joystick1    = (dut.joystick1&0xf0) | ((v&8)>>1) | ((v&4)<<1) | ((v&2)>>1) | ((v&1)<<1);
+        joystick = (joystick&0xf0) | ((v&8)>>1) | ((v&4)<<1) | ((v&2)>>1) | ((v&1)<<1);
 #endif
 #ifdef _JTFRAME_JOY_DULR
-        dut.joystick1    = (dut.joystick1&0xf0) | ((v&8)>>1) | ((v&4)<<1) | (v&3);
+        joystick = (joystick&0xf0) | ((v&8)>>1) | ((v&4)<<1) | (v&3);
 #endif
 #ifdef _JTFRAME_JOY_UDRL
-        dut.joystick1    = (dut.joystick1&0xf0) | (v&0xc) | ((v&2)>>1) | ((v&1)<<1);
+        joystick = (joystick&0xf0) | (v&0xc) | ((v&2)>>1) | ((v&1)<<1);
 #endif
     }
 };
@@ -470,6 +472,9 @@ class JTSim {
     bool download;
     VerilatedVcdC* tracer;
     SDRAM sdram;
+#ifdef _JTFRAME_SDRAM_XL
+    SDRAM sdram2;
+#endif
     SimInputs sim_inputs;
     Download dwn;
     int frame_cnt, last_LVBL, last_VS, last_flip;
@@ -550,7 +555,11 @@ void JTSim::reset( int v ) {
 }
 
 JTSim::JTSim( UUT& g, int argc, char *argv[]) :
-    wav("test.wav",48000,false), sdram(g), sim_inputs(g), dwn(g), game(g),vrate(0)
+    wav("test.wav",48000,false), sdram(g)
+#ifdef _JTFRAME_SDRAM_XL
+    , sdram2(g, "sdram2", true)
+#endif
+    , sim_inputs(g), dwn(g), game(g),vrate(0)
 {
     simtime   = 0;
     frame_cnt = 0;
@@ -635,6 +644,9 @@ void JTSim::clock(int n) {
         game.eval();
         if( game.contextp()->gotFinish() ) return;
         sdram.update(simtime + multi_clock->get_semi_period());
+#ifdef _JTFRAME_SDRAM_XL
+        sdram2.update(simtime + multi_clock->get_semi_period());
+#endif
         dwn.update();
         if( !cur_dwn && last_dwnd ) {
             fprintf(stderr,"\nROM file transfered (frame %d)\n",frame_cnt);
@@ -642,7 +654,12 @@ void JTSim::clock(int n) {
             if( finish_frame>0 && _DUMP_START==0 ) {
                 finish_frame += frame_cnt;
             }
-            if ( dwn.FullDownload() ) sdram.dump();
+            if ( dwn.FullDownload() ) {
+                sdram.dump();
+#ifdef _JTFRAME_SDRAM_XL
+                sdram2.dump();
+#endif
+            }
             reset(0);
         }
 #ifdef _RST_DLY
@@ -657,6 +674,9 @@ void JTSim::clock(int n) {
         game.eval();
         if( game.contextp()->gotFinish() ) return;
         sdram.update(simtime + multi_clock->get_semi_period());
+#ifdef _JTFRAME_SDRAM_XL
+        sdram2.update(simtime + multi_clock->get_semi_period());
+#endif
         simtime += multi_clock->get_semi_period();
         ticks++;
 
@@ -700,8 +720,10 @@ void JTSim::video_dump() {
 #endif
     static int LHBLl, LVBLl;
     static int cntw[2], cnth[2];
+    static bool active_video;
     static int last_pxlcen=0;
     if( game.pxl_cen && !last_pxlcen ) {
+        if( game.LHBL && game.LVBL ) active_video = true;
         if( game.LHBL && game.LVBL && frame_cnt>0 ) {
             const int MASK = (1<<_JTFRAME_COLORW)-1;
             int red   = game.red   & MASK;
@@ -717,6 +739,9 @@ void JTSim::video_dump() {
             totalw = cntw[0];
             activew= cntw[1];
             cntw[0]=0; cntw[1]=0;
+            cnth[0]++;
+            if( active_video ) cnth[1]++;
+            active_video = false;
             if( !game.LVBL && LVBLl!=0 ) {
                 report_flip_changes();
                 totalh = cnth[0];
@@ -746,9 +771,6 @@ void JTSim::video_dump() {
                         exit(0);
                     }
                 }
-            } else {
-                cnth[0]++;
-                if( game.LVBL!=0 ) cnth[1]++;
             }
             LVBLl = game.LVBL;
         } else {

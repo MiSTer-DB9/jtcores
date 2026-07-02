@@ -134,14 +134,25 @@ module SH7604_BSC
 	endfunction	
 	
 	function bit IsSDRAMArea(input bit [1:0] area, input BCR1_t BCR1);
+		bit       dram3,sdram2,sdram3;
 		bit       res;
 	
+		{dram3,sdram2,sdram3} = '0;
+		case (BCR1.DRAM)
+			3'h1: sdram3 = 1;
+			3'h2: dram3 = 1;
+			3'h4: sdram2 = 1;
+			3'h5: {sdram2,sdram3} = '1;
+			default:;
+		endcase
+
 		case (area)
 			2'd0: res = 0;
 			2'd1: res = 0;
-			2'd2: res = BCR1.DRAM[2];
-			2'd3: res = ~BCR1.DRAM[1] & BCR1.DRAM[0];
+			2'd2: res = sdram2;
+			2'd3: res = dram3|sdram3;
 		endcase
+
 		return res;
 	endfunction 
 	
@@ -207,6 +218,7 @@ module SH7604_BSC
 		bit [ 1: 0] NOP_WAIT_CNT;
 		bit [31: 0] BUS_DI_LATCH;
 		bit         BUS_WE_LATCH;
+		bit         IS_SDRAM_LATCH;
 		bit [ 3: 0] NEXT_BA;
 		bit [ 1: 0] AREA_SZ;
 		bit         LL;
@@ -256,6 +268,9 @@ module SH7604_BSC
 			end
 			case (BUS_STATE)
 				T0: begin
+					if (CE_R) begin
+						IS_SDRAM_LATCH <= 0;
+					end
 				end
 				
 				T1: begin
@@ -762,6 +777,7 @@ module SH7604_BSC
 								end
 								RCD_WAIT_CNT <= 2'd1 + MCR.RCD;
 								SDRAM_PRECHARGE_PEND <= MASTER;
+								IS_SDRAM_LATCH <= DBUS_IS_SDRAM;
 								INSERT_WAIT <= ~FAST; 
 								
 								A <= DBUS_A[26:0];
@@ -890,8 +906,9 @@ module SH7604_BSC
 									BURST_EN <= 0;
 									BURST_SINGLE <= 1;
 								end
-								RCD_WAIT_CNT <= 2'd1 + MCR.RCD;
+								RCD_WAIT_CNT <= (IS_SDRAM_LATCH && !BUS_WE_LATCH && CBUS_IS_SDRAM && !CBUS_WE ? 2'd0 : 2'd1) + MCR.RCD;
 								if (!CBUS_WE) SDRAM_PRECHARGE_PEND <= MASTER;
+								IS_SDRAM_LATCH <= CBUS_IS_SDRAM;
 								INSERT_WAIT <= ~FAST;
 								
 								A <= CBUS_A[26:0];

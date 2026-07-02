@@ -29,6 +29,7 @@ module SH7604_CACHE (
 	input             IBUS_WAIT,
 
 	input             CPS3_DECRYPT,
+	input             CPS3_ALT_DECRYPT,
 	input      [31:0] CPS3_KEY1,
 	input      [31:0] CPS3_KEY2
 );
@@ -55,7 +56,7 @@ module SH7604_CACHE (
 	wire NOCACHE_AREA    = (CBUS_A[31:29] == 3'b001);
 	wire PURGE_AREA      = (CBUS_A[31:29] == 3'b010);
 	wire CACHE_ADDR_AREA = (CBUS_A[31:29] == 3'b011);
-	wire CACHE_DATA_AREA = (CBUS_A[31:29] == 3'b110);
+	wire CACHE_DATA_AREA = (CBUS_A[31:29] == 3'b110 || CBUS_A[31:29] == 3'b100);
 	wire IO_AREA         = (CBUS_A[31:29] == 3'b111) && !CCR_SEL;
 	
 	
@@ -115,7 +116,7 @@ module SH7604_CACHE (
 				6'b0??11?: res = 4'b0010;
 				6'b?0?0?1: res = 4'b0100;
 				6'b??0?00: res = 4'b1000;
-				default:   res = 4'b0001;
+				default:   res = 4'b0000;
 			endcase
 		end
 		return res;
@@ -128,7 +129,7 @@ module SH7604_CACHE (
 		      way[2] ? {lru[5],1'b1  ,lru[3],1'b1  ,lru[1],1'b0  } :
 		      way[1] ? {1'b1  ,lru[4],lru[3],1'b0  ,1'b0  ,lru[0]} :
 				way[0] ? {1'b0  ,1'b0  ,1'b0  ,lru[2],lru[1],lru[0]} :
-				         {1'b0  ,1'b0  ,1'b0  ,lru[2],lru[1],lru[0]};
+				         {lru[5],lru[4],lru[3],lru[2],lru[1],lru[0]};
 		return res;
 	endfunction
 	
@@ -618,6 +619,11 @@ module SH7604_CACHE (
 							end
 						end
 					end
+					else if (PURGE_AREA) begin
+						CACHE_WR_ADDR <= CBUS_A[28:2];
+						CACHE_WR_WAY <= WAY_TAG;
+						CACHE_LINE_PURGE <= 1;
+					end
 				end
 			end
 			
@@ -643,11 +649,14 @@ module SH7604_CACHE (
 		end
 	end
 	
+	wire cps3_simm_opcode_area = CBUS_A[31:24] == 8'h06;
 	wire cps3_dec_en = CPS3_DECRYPT && CBUS_ID && CACHE_DATA_AREA;
+	wire cps3_alt_dec_en = CPS3_ALT_DECRYPT && CBUS_ID && CACHE_AREA && cps3_simm_opcode_area;
+	wire [31:0] cps3_ibus_data_dec = IBUS_DI ^ cps3_mask({CBUS_A[31:2], 2'b00}, CPS3_KEY1, CPS3_KEY2);
 
 	assign CBUS_DO = CCR_SEL ? {4{CCR & CCR_RMASK}}    :
-					 IBDATA_RDY  ? IBUS_DI             :
-					 cps3_dec_en ? cps3_cache_data_dec : CACHE_DATA;
+					 IBDATA_RDY  ? (cps3_alt_dec_en ? cps3_ibus_data_dec : IBUS_DI) :
+					 (cps3_dec_en || cps3_alt_dec_en) ? cps3_cache_data_dec : CACHE_DATA;
 	assign CBUS_BUSY = CBUS_REQ && (IBUS_READ || IBUS_READARRAY || IBUS_READ_PEND || IBUS_WRITE_PEND ||
 						(IBUS_WRITE && !IO_AREA));
 

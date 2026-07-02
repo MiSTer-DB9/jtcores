@@ -833,6 +833,77 @@ func Test_check_sdram_cache_lanes_uses_large_full_sdram_when_macro_is_set(t *tes
 	}
 }
 
+
+func Test_check_sdram_cache_lanes_uses_xl_full_sdram_when_macro_is_set(t *testing.T) {
+	cfg := MemConfig{
+		SDRAM: SDRAMCfg{
+			Cache_lanes: []SDRAMCacheLine{{
+				Name:       "tiles",
+				Data_width: 16,
+				Blocks:     SDRAMCacheCfg{Count: 1, Size: "1kB"},
+			}},
+		},
+	}
+	macros.MakeFromMap(map[string]string{"JTFRAME_SDRAM_XL": ""})
+	if e := cfg.check_sdram(); e != nil {
+		t.Fatal(e)
+	}
+	line := cfg.SDRAM.Cache_lanes[0]
+	if line.Span_bytes != 128*1024*1024 {
+		t.Fatalf("Wrong XL full SDRAM span. Got %d", line.Span_bytes)
+	}
+	if cache_line_aw(line) != 27 {
+		t.Fatalf("Wrong cache-line AW for full 128MB span. Got %d", cache_line_aw(line))
+	}
+}
+
+func Test_check_sdram_cache_lanes_accepts_xl_chip_one(t *testing.T) {
+	sample := `sdram:
+  cache-lanes:
+    - name: tiles
+      data_width: 32
+      blocks: { count: 1, size: 1kB }
+      at: { bank: 2, chip: 1, offset: 0x1000, length: 8MB }
+`
+	var cfg MemConfig
+	if e := yaml.Unmarshal([]byte(sample), &cfg); e != nil {
+		t.Fatal(e)
+	}
+	macros.MakeFromMap(map[string]string{"JTFRAME_SDRAM_XL": ""})
+	if e := cfg.check_sdram(); e != nil {
+		t.Fatal(e)
+	}
+	line := cfg.SDRAM.Cache_lanes[0]
+	if line.At.Chip != 1 {
+		t.Fatalf("Wrong chip decoded. Got %d", line.At.Chip)
+	}
+	start, _, e := cache_lane_abs_range(line, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	wantStart := int64(64*1024*1024 + 2*16*1024*1024 + 0x2000)
+	if start != wantStart {
+		t.Fatalf("Wrong chip-1 cache start. Got %X, wanted %X", start, wantStart)
+	}
+}
+
+func Test_check_sdram_cache_lanes_rejects_chip_without_xl(t *testing.T) {
+	cfg := MemConfig{
+		SDRAM: SDRAMCfg{
+			Cache_lanes: []SDRAMCacheLine{{
+				Name:       "tiles",
+				Data_width: 32,
+				Blocks:     SDRAMCacheCfg{Count: 1, Size: "1kB"},
+				At:         SDRAMCacheAddr{Bank: 0, Chip: 1, Length: "8MB"},
+			}},
+		},
+	}
+	macros.MakeFromMap(nil)
+	if e := cfg.check_sdram(); e == nil {
+		t.Fatal("Expected chip 1 cache lane to require JTFRAME_SDRAM_XL")
+	}
+}
+
 func Test_check_sdram_cache_lanes_rejects(t *testing.T) {
 	cases := []MemConfig{
 		{
@@ -1524,6 +1595,58 @@ func Test_game_sdram_template_uses_32bit_bram_wrappers(t *testing.T) {
 	}
 	if strings.Contains(out, ".SIMFILE_0(") || strings.Contains(out, ".SIMFILE_3(") {
 		t.Fatalf("generated template should not emit per-lane binary SIMFILE parameters\n%s", out)
+	}
+}
+
+func Test_game_sdram_template_uses_32bit_ioctl_dump_restore(t *testing.T) {
+	sample := `bram:
+  - name: fb
+    addr_width: 11
+    data_width: 32
+    rw: true
+    simfile: {}
+    ioctl: { save: true, restore: true }
+`
+	var cfg MemConfig
+	if e := yaml.Unmarshal([]byte(sample), &cfg); e != nil {
+		t.Fatal(e)
+	}
+	cfg.Core = "test"
+	cfg.normalize_bram_data_width()
+	if e := cfg.normalize_bram(); e != nil {
+		t.Fatal(e)
+	}
+	if e := cfg.check_bram(); e != nil {
+		t.Fatal(e)
+	}
+	fill_implicit_ports(&cfg)
+	make_ioctl(&cfg)
+	cfg.fill_gfx_sort()
+
+	tpl := get_game_sdram_template(t)
+	var verilog strings.Builder
+	if e := tpl.Execute(&verilog, cfg); e != nil {
+		t.Fatal(e)
+	}
+	out := verilog.String()
+
+	checks := []string{
+		"wire [3:0] fb_wemx;",
+		".DW0( 32 ), .AW0( 11 )",
+		".we0          ( fb_we),",
+		".we0_mx       ( fb_wemx )",
+		".we     ( fb_wemx )",
+	}
+	for _, each := range checks {
+		if !strings.Contains(out, each) {
+			t.Fatalf("generated template is missing %q\n%s", each, out)
+		}
+	}
+	if strings.Contains(out, "wire [  1:0] fb_wemx") {
+		t.Fatalf("generated template should use a 4-bit ioctl write-enable mux for 32-bit BRAM\n%s", out)
+	}
+	if strings.Contains(out, "{ 1'b0,fb_we }") {
+		t.Fatalf("generated template should not narrow 32-bit ioctl write-enable input\n%s", out)
 	}
 }
 

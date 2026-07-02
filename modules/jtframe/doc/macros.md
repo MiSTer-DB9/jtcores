@@ -49,6 +49,9 @@ JTFRAME_LIGHTGUN_XOFFSET |         | Used with JTFRAME_LIGHTGUN, adds a 9 bit co
 JTFRAME_LIGHTGUN_YOFFSET |         | Used with JTFRAME_LIGHTGUN, adds a 9 bit correction value to lightgun Y coordinate sent to core
 JTFRAME_LF_BUFFER        |         | Enables the line-based frame buffer. In MiSTer it can share DDR with JTFRAME_MR_DDRLOAD
 JTFRAME_LF_FULLV         |         | Render blanking lines for line-based frame buffer (makes frame longer to process)
+JTFRAME_LF_HW            |         | Horizontal address width for the line-based frame buffer (default=9)
+JTFRAME_LF_VW            |         | Vertical address width for the line-based frame buffer (default=8)
+JTFRAME_LF_ZOOM          |         | Frame buffer scaling support directly by the game module
 JTFRAME_LF_SDRAM_BUFFER  | sidi128 | The line-based frame buffer (JTFRAME_LF_BUFFER) is implemented in the second SDRAM
 JTFRAME_LITE_KEYBOARD    |         | Disables automatic MAME keys mapping
 JTFRAME_LOGO_NOHEX       | Pocket  | Do not display the chip ID on the logo screen
@@ -67,6 +70,7 @@ JTFRAME_MR_FASTIO        | MiSTer  | 16-bit ROM load in MiSTer. Set by default i
 JTFRAME_NO_ANALOGIZER    | Pocket  | Disables analog video output and SNAC controllers through cartridge pins. Defined by default if JTFRAME_RELEASE is not defined
 JTFRAME_NO_DB15          | MiSTer  | Disables DB15 controller modules
 JTFRAME_NOSTA            |         | jtcore will not check STA and will produce a PASS regardless of it
+JTFRAME_EASY_STA         |         | jtcore accepts small negative STA slack down to -0.333 ns
 JTFRAME_NOHOLDBUS        |         | Reduces bus noise (non-interleaved SDRAM controller)
 JTFRAME_NOHQ2X           | MiSTer  | Disables HQ2X filter in MiSTer
 JTFRAME_OSD_FLIP         |         | flip option on OSD

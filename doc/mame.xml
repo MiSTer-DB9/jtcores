@@ -50972,6 +50972,330 @@
 		</port>
 		<driver status="good" emulation="good" savestate="supported"/>
 	</machine>
+	<machine name="ddribble" sourcefile="konami/ddribble.cpp">
+		<description>Double Dribble</description>
+		<year>1986</year>
+		<manufacturer>Konami</manufacturer>
+		<rom name="690c03.bin" size="65536" crc="07975a58" sha1="96fd1b2348bbdf560067d8ee3cd4c0514e263d7a" region="maincpu" offset="0"/>
+		<rom name="690c02.bin" size="32768" crc="f07c030a" sha1="db96a10f8bb657bf285266db9e775fa6af82f38c" region="subcpu" offset="0"/>
+		<rom name="690b01.bin" size="32768" crc="806b8453" sha1="3184772c5e5181438a17ac72129070bf164b2965" region="audiocpu" offset="0"/>
+		<rom name="690a05.bin" size="131072" crc="6a816d0d" sha1="73f2527d5f2b9d51b784be36e07e0d0c566a28d9" region="gfx1" offset="0"/>
+		<rom name="690a06.bin" size="131072" crc="46300cd0" sha1="07197a546fff452a41575fcd481da64ac6bf601e" region="gfx1" offset="1"/>
+		<rom name="690a10.bin" size="131072" crc="61efa222" sha1="bd7b993ad1c06d8f6ac29fbc07c4a987abe1ab42" region="gfx2" offset="0"/>
+		<rom name="690a09.bin" size="131072" crc="ab682186" sha1="a28982835042a07354557e1539b097cdf93fc466" region="gfx2" offset="1"/>
+		<rom name="690a08.bin" size="131072" crc="9a889944" sha1="ca96815aefb1e336bd2288841b00a5c21cacf90f" region="gfx2" offset="40000"/>
+		<rom name="690a07.bin" size="131072" crc="faf81b3f" sha1="0bd647b4cdd3f2209472e303fd22eedd5533d1b1" region="gfx2" offset="40001"/>
+		<rom name="690a11.i15" size="256" crc="f34617ad" sha1="79ceba6fe204472a5a659641ac4f14bb1f0ee3f6" region="proms" offset="0"/>
+		<rom name="690a04.bin" size="131072" crc="1bfeb763" sha1="f3e9acb2a7a9b4c8dee6838c1344a7a65c27ff77" region="vlm" offset="0"/>
+		<rom name="pal10l8-007553.bin" size="44" crc="0ae5a161" sha1="87571addf434b332019ea0e22372eb24b4fd0197" region="plds" offset="0"/>
+		<device_ref name="mc6809e"/>
+		<device_ref name="mc6809e"/>
+		<device_ref name="mc6809e"/>
+		<device_ref name="watchdog"/>
+		<device_ref name="screen"/>
+		<device_ref name="gfxdecode"/>
+		<device_ref name="palette"/>
+		<device_ref name="speaker"/>
+		<device_ref name="ym2203"/>
+		<device_ref name="vlm5030"/>
+		<device_ref name="filter_rc"/>
+		<device_ref name="filter_rc"/>
+		<device_ref name="filter_rc"/>
+		<chip type="cpu" tag="maincpu" name="Motorola MC6809E" clock="1536000"/>
+		<chip type="cpu" tag="subcpu" name="Motorola MC6809E" clock="1536000"/>
+		<chip type="cpu" tag="audiocpu" name="Motorola MC6809E" clock="1536000"/>
+		<chip type="audio" tag="mono" name="Speaker"/>
+		<chip type="audio" tag="ymsnd" name="YM2203 OPN" clock="3579545"/>
+		<chip type="audio" tag="vlm" name="Sanyo VLM5030" clock="3579545"/>
+		<chip type="audio" tag="filter1" name="RC Filter"/>
+		<chip type="audio" tag="filter2" name="RC Filter"/>
+		<chip type="audio" tag="filter3" name="RC Filter"/>
+		<display tag="screen" type="raster" rotate="0" width="256" height="224" refresh="60.000000" />
+		<sound channels="1"/>
+		<input players="2" coins="2">
+			<control type="joy" player="1" buttons="3" ways="8"/>
+			<control type="joy" player="2" buttons="3" ways="8"/>
+		</input>
+		<dipswitch name="Coin A" tag="DSW1" mask="15">
+			<diplocation name="SW1" number="1"/>
+			<diplocation name="SW1" number="2"/>
+			<diplocation name="SW1" number="3"/>
+			<diplocation name="SW1" number="4"/>
+			<dipvalue name="4 Coins/1 Credit" value="2"/>
+			<dipvalue name="3 Coins/1 Credit" value="5"/>
+			<dipvalue name="2 Coins/1 Credit" value="8"/>
+			<dipvalue name="3 Coins/2 Credits" value="4"/>
+			<dipvalue name="4 Coins/3 Credits" value="1"/>
+			<dipvalue name="1 Coin/1 Credit" value="15" default="yes"/>
+			<dipvalue name="4 Coins/5 Credits" value="0"/>
+			<dipvalue name="3 Coins/4 Credits" value="3"/>
+			<dipvalue name="2 Coins/3 Credits" value="7"/>
+			<dipvalue name="1 Coin/2 Credits" value="14"/>
+			<dipvalue name="2 Coins/5 Credits" value="6"/>
+			<dipvalue name="1 Coin/3 Credits" value="13"/>
+			<dipvalue name="1 Coin/4 Credits" value="12"/>
+			<dipvalue name="1 Coin/5 Credits" value="11"/>
+			<dipvalue name="1 Coin/6 Credits" value="10"/>
+			<dipvalue name="1 Coin/7 Credits" value="9"/>
+		</dipswitch>
+		<dipswitch name="Coin B" tag="DSW1" mask="240">
+			<diplocation name="SW1" number="5"/>
+			<diplocation name="SW1" number="6"/>
+			<diplocation name="SW1" number="7"/>
+			<diplocation name="SW1" number="8"/>
+			<dipvalue name="4 Coins/1 Credit" value="32"/>
+			<dipvalue name="3 Coins/1 Credit" value="80"/>
+			<dipvalue name="2 Coins/1 Credit" value="128"/>
+			<dipvalue name="3 Coins/2 Credits" value="64"/>
+			<dipvalue name="4 Coins/3 Credits" value="16"/>
+			<dipvalue name="1 Coin/1 Credit" value="240" default="yes"/>
+			<dipvalue name="4 Coins/5 Credits" value="0"/>
+			<dipvalue name="3 Coins/4 Credits" value="48"/>
+			<dipvalue name="2 Coins/3 Credits" value="112"/>
+			<dipvalue name="1 Coin/2 Credits" value="224"/>
+			<dipvalue name="2 Coins/5 Credits" value="96"/>
+			<dipvalue name="1 Coin/3 Credits" value="208"/>
+			<dipvalue name="1 Coin/4 Credits" value="192"/>
+			<dipvalue name="1 Coin/5 Credits" value="176"/>
+			<dipvalue name="1 Coin/6 Credits" value="160"/>
+			<dipvalue name="1 Coin/7 Credits" value="144"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW2" mask="1">
+			<diplocation name="SW2" number="1"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="1"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW2" mask="2">
+			<diplocation name="SW2" number="2"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="2"/>
+		</dipswitch>
+		<dipswitch name="Cabinet" tag="DSW2" mask="4">
+			<dipvalue name="Upright" value="0" default="yes"/>
+			<dipvalue name="Cocktail" value="4"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW2" mask="8">
+			<diplocation name="SW2" number="4"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="8"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW2" mask="16">
+			<diplocation name="SW2" number="5"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="16"/>
+		</dipswitch>
+		<dipswitch name="Difficulty" tag="DSW2" mask="96">
+			<diplocation name="SW2" number="6"/>
+			<diplocation name="SW2" number="7"/>
+			<dipvalue name="Easy" value="96"/>
+			<dipvalue name="Normal" value="64"/>
+			<dipvalue name="Hard" value="32" default="yes"/>
+			<dipvalue name="Hardest" value="0"/>
+		</dipswitch>
+		<dipswitch name="Demo Sounds" tag="DSW2" mask="128">
+			<diplocation name="SW2" number="8"/>
+			<dipvalue name="Off" value="128"/>
+			<dipvalue name="On" value="0" default="yes"/>
+		</dipswitch>
+		<dipswitch name="Flip Screen" tag="DSW3" mask="1">
+			<diplocation name="SW3" number="1"/>
+			<dipvalue name="Off" value="1" default="yes"/>
+			<dipvalue name="On" value="0"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW3" mask="2">
+			<diplocation name="SW3" number="2"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="2"/>
+		</dipswitch>
+		<dipswitch name="Service Mode" tag="DSW3" mask="4">
+			<diplocation name="SW3" number="3"/>
+			<dipvalue name="Off" value="4" default="yes"/>
+			<dipvalue name="On" value="0"/>
+		</dipswitch>
+		<dipswitch name="Allow vs match with 1 Credit" tag="DSW3" mask="8">
+			<diplocation name="SW3" number="4"/>
+			<dipvalue name="Off" value="8" default="yes"/>
+			<dipvalue name="On" value="0"/>
+		</dipswitch>
+		<port tag=":DSW1">
+		</port>
+		<port tag=":DSW2">
+		</port>
+		<port tag=":DSW3">
+		</port>
+		<port tag=":P1">
+		</port>
+		<port tag=":P2">
+		</port>
+		<port tag=":SYSTEM">
+		</port>
+		<driver status="good" emulation="good" savestate="supported"/>
+	</machine>
+	<machine name="ddribblep" sourcefile="konami/ddribble.cpp" cloneof="ddribble" romof="ddribble">
+		<description>Double Dribble (prototype?)</description>
+		<year>1986</year>
+		<manufacturer>Konami</manufacturer>
+		<rom name="ebs_11-19.c19" size="65536" crc="0a81c926" sha1="1ecd30f0d352cf6c96d246bb443b5a6738624b9b" region="maincpu" offset="0"/>
+		<rom name="eb_11-19.c12" size="32768" crc="22130292" sha1="a5f9bf3f63ff85d171f096867433513419458b0e" region="subcpu" offset="0"/>
+		<rom name="master_sound.a6" size="32768" crc="090e3a31" sha1="4c645b55d52abb859354ea2ea401e4ab99f5d493" region="audiocpu" offset="0"/>
+		<rom name="v1a.e12" size="65536" crc="53724765" sha1="55a45ab71f7bf55ed805d4dc2345cadc4171f323" region="gfx1" offset="0"/>
+		<rom name="01a.e11" size="65536" crc="1ae5d725" sha1="d8dd41cc1872c6d218cc425d1cd03f8d8eefe3e3" region="gfx1" offset="20000"/>
+		<rom name="v1b.e13" size="65536" crc="d9dc6f1a" sha1="f50169525c5109ba65acdccbb01dddb92926462a" region="gfx1" offset="1"/>
+		<rom name="01b.d14" size="65536" crc="054c5242" sha1="411389e36d33fd27e13ffc6a7d4b295a42f08869" region="gfx1" offset="20001"/>
+		<rom name="v2a00.i13" size="65536" crc="a33f7d6d" sha1="c2b9a9a66e4712785250cad69a5e43338af60a82" region="gfx2" offset="0"/>
+		<rom name="v2a10.h13" size="65536" crc="8fbc7454" sha1="93782d148afe64b14fa46deb4d227ef167030c94" region="gfx2" offset="20000"/>
+		<rom name="v2b00.i12" size="65536" crc="e63759bb" sha1="df7e94f40266aa8995509346cdfdce08a885de16" region="gfx2" offset="1"/>
+		<rom name="v2b10.h12" size="65536" crc="8a7d4062" sha1="5b5eb4edc765f0e13e22f9de62ddae7380ba3790" region="gfx2" offset="20001"/>
+		<rom name="02a00.i11" size="65536" crc="6751a942" sha1="a71c9cbbf1fba92664144d571d49cf2c15f45408" region="gfx2" offset="40000"/>
+		<rom name="02a10.h11" size="65536" crc="bc5ff11c" sha1="b02296982298e1a659ce05606b291eda9a605cc8" region="gfx2" offset="60000"/>
+		<rom name="02b00_11-4.i8.bin" size="65536" crc="460aa7b4" sha1="9e928d6150e7a91d411c0510198e80d523a88272" region="gfx2" offset="40001"/>
+		<rom name="02b10.h8" size="65536" crc="2cc7ee28" sha1="c96890383dbef755953f851a43449cf563e2e1a5" region="gfx2" offset="60001"/>
+		<rom name="6301-1.i15" merge="690a11.i15" size="256" crc="f34617ad" sha1="79ceba6fe204472a5a659641ac4f14bb1f0ee3f6" region="proms" offset="0"/>
+		<rom name="voice_00.e7" size="65536" crc="8bd0fcf7" sha1="d55644f8b33eff6f960725f00ba842e0253e3b36" region="vlm" offset="0"/>
+		<rom name="voice_10.d7" size="65536" crc="b4c97494" sha1="93f7c3c93f6f790c3f480e183da0105b5ac3593b" region="vlm" offset="10000"/>
+		<device_ref name="mc6809e"/>
+		<device_ref name="mc6809e"/>
+		<device_ref name="mc6809e"/>
+		<device_ref name="watchdog"/>
+		<device_ref name="screen"/>
+		<device_ref name="gfxdecode"/>
+		<device_ref name="palette"/>
+		<device_ref name="speaker"/>
+		<device_ref name="ym2203"/>
+		<device_ref name="vlm5030"/>
+		<device_ref name="filter_rc"/>
+		<device_ref name="filter_rc"/>
+		<device_ref name="filter_rc"/>
+		<chip type="cpu" tag="maincpu" name="Motorola MC6809E" clock="1536000"/>
+		<chip type="cpu" tag="subcpu" name="Motorola MC6809E" clock="1536000"/>
+		<chip type="cpu" tag="audiocpu" name="Motorola MC6809E" clock="1536000"/>
+		<chip type="audio" tag="mono" name="Speaker"/>
+		<chip type="audio" tag="ymsnd" name="YM2203 OPN" clock="3579545"/>
+		<chip type="audio" tag="vlm" name="Sanyo VLM5030" clock="3579545"/>
+		<chip type="audio" tag="filter1" name="RC Filter"/>
+		<chip type="audio" tag="filter2" name="RC Filter"/>
+		<chip type="audio" tag="filter3" name="RC Filter"/>
+		<display tag="screen" type="raster" rotate="0" width="256" height="224" refresh="60.000000" />
+		<sound channels="1"/>
+		<input players="2" coins="2">
+			<control type="joy" player="1" buttons="3" ways="8"/>
+			<control type="joy" player="2" buttons="3" ways="8"/>
+		</input>
+		<dipswitch name="Coin A" tag="DSW1" mask="15">
+			<diplocation name="SW1" number="1"/>
+			<diplocation name="SW1" number="2"/>
+			<diplocation name="SW1" number="3"/>
+			<diplocation name="SW1" number="4"/>
+			<dipvalue name="4 Coins/1 Credit" value="2"/>
+			<dipvalue name="3 Coins/1 Credit" value="5"/>
+			<dipvalue name="2 Coins/1 Credit" value="8"/>
+			<dipvalue name="3 Coins/2 Credits" value="4"/>
+			<dipvalue name="4 Coins/3 Credits" value="1"/>
+			<dipvalue name="1 Coin/1 Credit" value="15" default="yes"/>
+			<dipvalue name="4 Coins/5 Credits" value="0"/>
+			<dipvalue name="3 Coins/4 Credits" value="3"/>
+			<dipvalue name="2 Coins/3 Credits" value="7"/>
+			<dipvalue name="1 Coin/2 Credits" value="14"/>
+			<dipvalue name="2 Coins/5 Credits" value="6"/>
+			<dipvalue name="1 Coin/3 Credits" value="13"/>
+			<dipvalue name="1 Coin/4 Credits" value="12"/>
+			<dipvalue name="1 Coin/5 Credits" value="11"/>
+			<dipvalue name="1 Coin/6 Credits" value="10"/>
+			<dipvalue name="1 Coin/7 Credits" value="9"/>
+		</dipswitch>
+		<dipswitch name="Coin B" tag="DSW1" mask="240">
+			<diplocation name="SW1" number="5"/>
+			<diplocation name="SW1" number="6"/>
+			<diplocation name="SW1" number="7"/>
+			<diplocation name="SW1" number="8"/>
+			<dipvalue name="4 Coins/1 Credit" value="32"/>
+			<dipvalue name="3 Coins/1 Credit" value="80"/>
+			<dipvalue name="2 Coins/1 Credit" value="128"/>
+			<dipvalue name="3 Coins/2 Credits" value="64"/>
+			<dipvalue name="4 Coins/3 Credits" value="16"/>
+			<dipvalue name="1 Coin/1 Credit" value="240" default="yes"/>
+			<dipvalue name="4 Coins/5 Credits" value="0"/>
+			<dipvalue name="3 Coins/4 Credits" value="48"/>
+			<dipvalue name="2 Coins/3 Credits" value="112"/>
+			<dipvalue name="1 Coin/2 Credits" value="224"/>
+			<dipvalue name="2 Coins/5 Credits" value="96"/>
+			<dipvalue name="1 Coin/3 Credits" value="208"/>
+			<dipvalue name="1 Coin/4 Credits" value="192"/>
+			<dipvalue name="1 Coin/5 Credits" value="176"/>
+			<dipvalue name="1 Coin/6 Credits" value="160"/>
+			<dipvalue name="1 Coin/7 Credits" value="144"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW2" mask="1">
+			<diplocation name="SW2" number="1"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="1"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW2" mask="2">
+			<diplocation name="SW2" number="2"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="2"/>
+		</dipswitch>
+		<dipswitch name="Cabinet" tag="DSW2" mask="4">
+			<dipvalue name="Upright" value="0" default="yes"/>
+			<dipvalue name="Cocktail" value="4"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW2" mask="8">
+			<diplocation name="SW2" number="4"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="8"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW2" mask="16">
+			<diplocation name="SW2" number="5"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="16"/>
+		</dipswitch>
+		<dipswitch name="Difficulty" tag="DSW2" mask="96">
+			<diplocation name="SW2" number="6"/>
+			<diplocation name="SW2" number="7"/>
+			<dipvalue name="Easy" value="96"/>
+			<dipvalue name="Normal" value="64"/>
+			<dipvalue name="Hard" value="32" default="yes"/>
+			<dipvalue name="Hardest" value="0"/>
+		</dipswitch>
+		<dipswitch name="Demo Sounds" tag="DSW2" mask="128">
+			<diplocation name="SW2" number="8"/>
+			<dipvalue name="Off" value="128"/>
+			<dipvalue name="On" value="0" default="yes"/>
+		</dipswitch>
+		<dipswitch name="Flip Screen" tag="DSW3" mask="1">
+			<diplocation name="SW3" number="1"/>
+			<dipvalue name="Off" value="1" default="yes"/>
+			<dipvalue name="On" value="0"/>
+		</dipswitch>
+		<dipswitch name="Unknown" tag="DSW3" mask="2">
+			<diplocation name="SW3" number="2"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="2"/>
+		</dipswitch>
+		<dipswitch name="Service Mode" tag="DSW3" mask="4">
+			<diplocation name="SW3" number="3"/>
+			<dipvalue name="Off" value="4" default="yes"/>
+			<dipvalue name="On" value="0"/>
+		</dipswitch>
+		<dipswitch name="Allow vs match with 1 Credit" tag="DSW3" mask="8">
+			<diplocation name="SW3" number="4"/>
+			<dipvalue name="Off" value="8" default="yes"/>
+			<dipvalue name="On" value="0"/>
+		</dipswitch>
+		<port tag=":DSW1">
+		</port>
+		<port tag=":DSW2">
+		</port>
+		<port tag=":DSW3">
+		</port>
+		<port tag=":P1">
+		</port>
+		<port tag=":P2">
+		</port>
+		<port tag=":SYSTEM">
+		</port>
+		<driver status="good" emulation="good" savestate="supported"/>
+	</machine>
 	<machine name="ddsom" sourcefile="capcom/cps2.cpp">
 		<description>Dungeons &amp; Dragons: Shadow over Mystara (Europe 960619)</description>
 		<year>1996</year>
