@@ -3,9 +3,14 @@
 *.kicad* merge=custom-no-merge
 # [MiSTer-DB9 BEGIN] - freeze upstream workflow files on merge
 # The default GITHUB_TOKEN used by sync-jotego-upstream.yaml cannot push
-# .github/workflows/* changes, so keep our version of any workflow file
-# upstream edits (the sync workflow registers merge.ours.driver and also
-# drops upstream-added workflow files post-merge). These files are disabled
-# via the Actions API regardless, so their content is irrelevant here.
+# .github/workflows/* or .gitea/workflows/* changes, so keep our version of
+# any workflow file upstream edits (the sync workflow registers
+# merge.ours.driver and also drops upstream-added workflow files post-merge).
+# .gitea/workflows covers jotego's GH Actions to Gitea Actions migration.
+# These files are disabled via the Actions API regardless, so their content
+# is irrelevant here. merge=ours only covers modify/modify conflicts;
+# rename/delete and modify/delete (the actual shape of the Gitea migration)
+# are handled by the auto-resolve fallback in "Merge upstream".
 .github/workflows/* merge=ours
+.gitea/workflows/* merge=ours
 # [MiSTer-DB9 END]

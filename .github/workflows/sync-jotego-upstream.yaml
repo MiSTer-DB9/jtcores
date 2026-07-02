@@ -12,11 +12,17 @@ name: Sync jotego upstream
 # trained from this fork's prior merge commits so recurring conflicts
 # (e.g. the DB9 wrap in jtframe_mister.sv) auto-replay. Jotego's own
 # workflows are kept in-tree (so their merges stay clean) but disabled via
-# the Actions API every run, never git-deleted — committing the deletion
-# turned every jotego edit to those files into a delete/modify conflict.
+# the Actions API every run, never git-deleted (committing the deletion
+# turned every jotego edit to those files into a delete/modify conflict).
+# Jotego's GH Actions to Gitea Actions workflow-file migration still
+# produces rename/delete and modify/delete conflicts under
+# .github/workflows and .gitea/workflows (merge=ours only covers
+# modify/modify); "Merge upstream" auto-resolves those (keep-ours,
+# drop-theirs) since their content is disabled and irrelevant regardless.
 # On a clean/auto-resolved merge we push master and the next nightly
 # compile-mister-db9 run picks up the new HEAD; on a genuine, never-seen
-# conflict we abort for a one-time manual rebase. Never force-pushes.
+# conflict outside the workflow dirs we abort for a one-time manual
+# rebase. Never force-pushes.
 # [MiSTer-DB9 END]
 
 on:
@@ -51,14 +57,17 @@ jobs:
           # commit, handled in "Merge upstream").
           git config rerere.enabled true
           git config rerere.autoupdate true
-          # merge=ours driver for .github/workflows/* (see .gitattributes):
-          # the default GITHUB_TOKEN cannot push .github/workflows/* changes
-          # (GitHub blocks it; no workflows scope on that token), so upstream
-          # edits to jotego's in-tree workflow files must never enter our merge.
-          # `ours` keeps our version with no conflict; the post-merge freeze in
-          # "Merge upstream" additionally drops any workflow file upstream adds.
-          # These files are disabled via the Actions API anyway, so content is
-          # irrelevant.
+          # merge=ours driver for .github/workflows/* and .gitea/workflows/*
+          # (see .gitattributes): the default GITHUB_TOKEN cannot push changes
+          # under either directory (GitHub blocks it; no workflows scope on
+          # that token), so upstream edits to jotego's in-tree workflow files
+          # must never enter our merge. `ours` keeps our version with no
+          # conflict on modify/modify; the post-merge freeze in "Merge
+          # upstream" additionally drops any workflow file upstream adds, and
+          # the auto-resolve fallback there handles rename/delete and
+          # modify/delete conflicts (merge=ours does not apply to those
+          # classes). These files are disabled via the Actions API anyway, so
+          # content is irrelevant.
           git config merge.ours.driver true
 
       - name: Fetch jotego upstream
@@ -169,39 +178,69 @@ jobs:
           else
             # rerere.autoupdate stages resolutions it has been trained on but
             # does not commit the merge. If no unmerged paths remain, every
-            # conflict was auto-resolved from the trained cache -> finalize.
-            # Otherwise a genuine, never-resolved conflict needs a human once
-            # (after which the resolving merge commit on master trains rerere
-            # and the next sync auto-resolves it). Upstream workflow files are
-            # no longer deleted, so there is no delete/modify conflict class.
+            # conflict was auto-resolved from the trained cache, finalize.
             if [ -z "$(git ls-files -u)" ]; then
               git commit --no-edit
               echo "rerere auto-resolved all conflicts; merge finalized."
             else
-              echo "::error::Upstream merge conflict — manual rebase required"
-              git ls-files -u | awk '{print $4}' | sort -u | sed 's/^/  conflict: /'
-              git merge --abort || true
-              exit 1
+              # [MiSTer-DB9 BEGIN] - auto-resolve workflow-dir-only conflicts
+              # rename/delete and modify/delete conflicts (merge=ours doesn't
+              # apply to these classes) hit here whenever jotego renames or
+              # restructures a file under .github/workflows or
+              # .gitea/workflows (e.g. their GH Actions to Gitea Actions
+              # migration). Content of these files is irrelevant to us (see
+              # .gitattributes), so if every remaining unmerged path is under
+              # one of those two directories, resolve keep-ours/drop-theirs
+              # instead of aborting: restore each path to its pre-merge
+              # (BEFORE) content if we had it, else drop it. This mirrors the
+              # freeze step below and keeps a real, never-seen conflict
+              # elsewhere still routed to the manual-rebase path.
+              UNMERGED=$(git ls-files -u | awk '{print $4}' | sort -u)
+              REMAINING=$(echo "$UNMERGED" | grep -vE '^\.(github|gitea)/workflows/' || true)
+              if [ -n "$UNMERGED" ] && [ -z "$REMAINING" ]; then
+                echo "Auto-resolving workflow-dir conflicts (keep pre-merge state):"
+                echo "$UNMERGED" | sed 's/^/  /'
+                echo "$UNMERGED" | while read -r f; do
+                  if git cat-file -e "${BEFORE}:${f}" 2>/dev/null; then
+                    git checkout "$BEFORE" -- "$f"
+                    git add "$f"
+                  else
+                    rm -f "$f"
+                    git rm -qf --ignore-unmatch "$f"
+                  fi
+                done
+                git commit --no-edit
+                echo "Workflow-dir conflicts auto-resolved; merge finalized."
+              else
+                echo "::error::Upstream merge conflict, manual rebase required"
+                echo "$UNMERGED" | sed 's/^/  conflict: /'
+                git merge --abort || true
+                exit 1
+              fi
+              # [MiSTer-DB9 END]
             fi
           fi
 
-          # [MiSTer-DB9 BEGIN] - freeze .github/workflows to our pre-merge version
-          # The default GITHUB_TOKEN cannot push .github/workflows/* changes, so
-          # the merged tree must carry zero workflow-file diff vs BEFORE.
-          # merge=ours (see .gitattributes) already keeps our content for files
-          # upstream *edits*; this also drops any workflow file upstream *adds*
-          # (merge=ours doesn't apply to adds). Idempotent no-op when the merge
-          # touched no workflow file. Jotego's workflows are disabled via the
-          # Actions API regardless, so freezing their content costs nothing.
-          if ! git diff --quiet "$BEFORE" HEAD -- .github/workflows; then
+          # [MiSTer-DB9 BEGIN] - freeze workflow dirs to our pre-merge version
+          # The default GITHUB_TOKEN cannot push .github/workflows/* or
+          # .gitea/workflows/* changes, so the merged tree must carry zero
+          # diff vs BEFORE in either directory. merge=ours (see
+          # .gitattributes) already keeps our content for files upstream
+          # *edits*; this also drops any workflow file upstream *adds*
+          # (merge=ours doesn't apply to adds), and re-covers any path the
+          # conflict auto-resolve above already fixed (idempotent no-op
+          # there). Jotego's workflows are disabled via the Actions API
+          # regardless, so freezing their content costs nothing.
+          if ! git diff --quiet "$BEFORE" HEAD -- .github/workflows .gitea/workflows; then
             # Restore edited/deleted workflow files to our version (staged).
-            git checkout "$BEFORE" -- .github/workflows
+            git checkout "$BEFORE" -- .github/workflows .gitea/workflows 2>/dev/null || \
+              git checkout "$BEFORE" -- .github/workflows
             # Drop workflow files upstream added that we never had.
-            git ls-files .github/workflows | while read -r f; do
+            git ls-files .github/workflows .gitea/workflows | while read -r f; do
               git cat-file -e "${BEFORE}:${f}" 2>/dev/null || git rm -qf "$f"
             done
             git commit --amend --no-edit
-            echo "Froze .github/workflows to pre-merge tip ${BEFORE}."
+            echo "Froze .github/workflows and .gitea/workflows to pre-merge tip ${BEFORE}."
           else
             echo "Merge touched no workflow files; nothing to freeze."
           fi
