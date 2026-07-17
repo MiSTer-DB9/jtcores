@@ -5,10 +5,6 @@
 //  up the sprite colour (I15 256x4 PROM on chip 2 / 1:1 on chip 1) and fills a
 //  jtframe_obj_buffer that is read back at display time as obj_pxl (0=transp.).
 //
-//  The VRAM-scan and gfx-ROM ports are time-shared with the tilemap engine in
-//  the parent chip: this module owns them only during obj_win (h_cnt>=272); the
-//  parent muxes obj_rd_addr / rom_addr onto the shared buses.
-//
 //  Author: Andrea Bogazzi <andreabogazzi79@gmail.com>
 //  JTCORES integration is GPL-3 (see jtcores LICENSE).
 //============================================================================
@@ -27,17 +23,17 @@ module jtddrbl_obj #(
     // video timing from the parent chip
     input      [ 8:0]  h_cnt,
     input      [ 8:0]  v_cnt,
-    input              obj_win,          // sprite window (h_cnt>=272)
+    input              obj_win,          // sprite window
     input              hblank,           // active-high horizontal blank (display gate)
 
-    // OBJ-list scan on the shared VRAM render port (parent muxes when obj_win)
+    // OBJ-list scan
     output     [11:0]  obj_rd_addr,
     input      [ 7:0]  vram_scn_dout,
 
     // External PROM
     output     [ 3:0]  OCF,OCB,
     input      [ 3:0]  OCD,
-    // sprite gfx fetch on the shared gfx-ROM bus (parent muxes when obj_win)
+    // sprite gfx fetch on the gfx-ROM bus
     output     [17:0]  rom_addr,
     output             rom_cs,
     input      [ 7:0]  RDU,
@@ -70,7 +66,7 @@ reg  [15:0] spr_word;      // fetched gfx word (4 px)
 reg  [ 1:0] spr_dn;        // nibble counter for the dump
 reg         old_hblk_obj;
 reg         line_we;
-reg  [ 7:0] line_addr;
+reg  [ 8:0] line_addr;
 reg  [ 3:0] line_data;     // OCD (looked-up sprite colour), 0 = transparent
 
 assign obj_rd_addr = { 3'd0, obj_base } + { 9'd0, obj_byte };
@@ -97,10 +93,7 @@ wire [16:0] spr_local = { eff_num, row_sp[3], spr_hp[3], row_sp[2:0], spr_hp[2] 
 assign rom_addr = OBJSTART | ({1'b0, spr_local} & OBJMASK);
 assign rom_cs   = obj_run && (obj_st==4'd6 || obj_st==4'd7);
 
-// Screen column for the write. No wrap: a column >=256 is off-screen (dropped).
-// h-flip mirrors the column within the sprite.
 wire [ 5:0] hp_scr   = s_fx ? (obj_w - 6'd1 - spr_hp) : spr_hp;
-// -1: the sprite layer measured 1px right of MAME; shift it left to align.
 wire [ 9:0] full_col = ({1'b0, s_xpos} + {4'd0, hp_scr}) - 10'd1;
 
 wire [3:0] dump_nibble = spr_word[15:12];                 // OCB (sprite pixel)
@@ -146,9 +139,8 @@ always @(posedge clk) begin
         4'd6: obj_st<=4'd7;                                    // issue gfx fetch
         4'd7: if (rom_ok) begin spr_word<={RDU,RDL}; spr_dn<=2'd0; obj_st<=4'd8; end
         4'd8: begin                                            // dump 4 px (high-nibble first)
-                  // write only if on-screen and opaque (OCD!=0)
-                  line_we   <= ~|full_col[9:8] & (OCD != 4'd0);
-                  line_addr <= full_col[7:0];
+                  line_we   <= (OCD != 4'd0);
+                  line_addr <= full_col[8:0];
                   line_data <= OCD;                        // looked-up sprite colour
                   spr_word  <= { spr_word[11:0], 4'd0 };
                   spr_hp    <= spr_hp + 6'd1;
@@ -166,11 +158,10 @@ always @(posedge clk) begin
 end
 
 // Sprite line buffer (jtframe_obj_buffer, double-buffered, erase-on-read).
-wire [7:0] obj_dcol = h_cnt[7:0] - HB_OPEN[7:0];   // display read column
-// Toggle the double buffer at h_cnt 2 (the post-obj_win / pre-display gap) so the
-// display read and the obj_win write always hit opposite banks.
+wire [8:0] obj_dcol = { 1'b0, h_cnt[7:0] - HB_OPEN[7:0] };
+// Toggle the double buffer at h_cnt 2 so display read and obj_win write hit opposite banks.
 wire objbuf_lhbl = (h_cnt < 9'd2) || (h_cnt >= 9'd14);
-jtframe_obj_buffer #(.DW(4), .AW(8), .ALPHA(4'h0)) u_objbuf(
+jtframe_obj_buffer #(.DW(4), .AW(9), .ALPHA(4'h0)) u_objbuf(
     .clk     ( clk            ),
     .LHBL    ( objbuf_lhbl    ),
     .flip    ( 1'b0           ),

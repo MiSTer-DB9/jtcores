@@ -10,6 +10,7 @@ Common options:
     -frame <n>                           Simulate a fixed number of frames
     -time <ms>                           Simulate for a fixed number of milliseconds
     -video [frames]                      Dump video output
+    -dummyROM                            Use a local dummy rom.bin without set-name lookup
     -w [frame] | -deep [frame]           Dump waveform data
     -inputs [file]                       Feed sim_inputs.hex or a cabinet-input file
     -setname <name>                      Build the ROM for a specific setname
@@ -294,7 +295,12 @@ prepare_fst_pipe() {
 }
 
 run_verilator_sim() {
-	$SHOWCMD obj_dir/sim $TRACE -time $SIM_MS || echo "Verilator sim exit code $?"
+	$SHOWCMD obj_dir/sim $TRACE -time $SIM_MS
+	local rc=$?
+	if [ $rc != 0 ]; then
+		echo "Verilator sim exit code $rc"
+		exit $rc
+	fi
 }
 
 clean_fst_pipe() {
@@ -404,7 +410,7 @@ compare_scene_snapshot() {
         echo "scene,core,ref,diff,nonzero,total,nonzero_pct,mean_abs,max_abs,status" > "$csv"
         echo "$scene_name,$candidate,$snapshot,,0,0,0,0,0,size_mismatch:${ref_size/,/x}:${cand_size/,/x}" >> "$csv"
         echo "Scene snapshot compare: MISMATCH $scene_name size mismatch ref=$ref_size core=$cand_size"
-        return 0
+        return 1
     fi
 
     convert "$snapshot" "$candidate" -compose difference -composite "$diff" 2>/dev/null || return 0
@@ -431,6 +437,7 @@ compare_scene_snapshot() {
     echo "scene,core,ref,diff,nonzero,total,nonzero_pct,mean_abs,max_abs,status" > "$csv"
     echo "$scene_name,$candidate,$snapshot,$diff,$nonzero,$total,$nonzero_pct,$mean_abs,$max_abs,$status" >> "$csv"
     echo "Scene snapshot compare: $label $scene_name nonzero=$nonzero/$total (${nonzero_pct}%) mean_abs=$mean_abs max_abs=$max_abs"
+    [ "$status" = match ]
 }
 
 display_scene_frame() {
@@ -551,7 +558,7 @@ check_mra_outputs_current() {
     local filename
     local toml_mtime file_mtime
 
-    if [[ -n "$ROMLESS" || ! -e "$toml" ]]; then
+    if [[ -n "$ROMLESS" || -n "$DUMMYROM" || ! -e "$toml" ]]; then
         return 0
     fi
 
