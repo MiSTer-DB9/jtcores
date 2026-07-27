@@ -66,6 +66,16 @@ jobs:
           CORES='['
           for i in *; do
             if [[ -e $i/cfg/macros.def && ! -e $i/cfg/skip ]]; then
+              # [MiSTer-DB9 BEGIN] - drop cores needing a private jotego submodule.
+              # modules/jt539 is private (anon clone 401), so the build job's
+              # `Init public submodules` step deliberately skips it. Cores whose
+              # cfg/files.yaml pulls a `jt539:` section then die at parse time with
+              # "modules/jt539/cfg/files.yaml did not match any file" (xmen, prmr,
+              # rungun). They can never compile here; jotego's own RBF ships for
+              # them through jtbindb. Grepping the cfg keeps this self-maintaining
+              # if upstream adds a fourth jt539 core.
+              if grep -qE '^jt539:' $i/cfg/*.yaml 2>/dev/null; then continue; fi
+              # [MiSTer-DB9 END]
               if [ "$CORES" != '[' ]; then CORES="$CORES, "; fi
               CORES="$CORES \"$i\""
             fi
