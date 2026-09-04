@@ -1,20 +1,6 @@
-/*  This file is part of JTCORES.
-    JTCORES program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    JTCORES program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with JTCORES.  If not, see <http://www.gnu.org/licenses/>.
-
-    Author: Jose Tejada Gomez. Twitter: @topapate
-    Version: 1.0
-    Date: 14-9-2019 */
+/* SPDX-FileCopyrightText: 2026 Jose Tejada Gomez
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * Date: 14-9-2019 */
 
 
 module jtbiocom_game(
@@ -83,7 +69,7 @@ jtgng_timer u_timer(
     .Vinit     (          )
 );
 
-jtbiocom_main #(.SAME_CLK(1)) u_main(
+jtbiocom_main u_main(
     .rst        ( rst           ),
     .clk        ( clk           ),
     .cpu_cen    ( cpu_cen       ),
@@ -154,7 +140,7 @@ jtbiocom_main #(.SAME_CLK(1)) u_main(
     .dipsw_b    ( dipsw[15:8]   )
 );
 
-jtbiocom_mcu #(.SAME_CLK(1)) u_mcu(
+jtbiocom_mcu u_mcu(
     .rst        ( rst           ),
     .clk        ( clk           ),
     .rst_cpu    ( rst           ),
@@ -203,7 +189,7 @@ jtbiocom_sound #(.RECOVERY(1)) u_sound (
     .fm_l           ( fm_l           ),
     .fm_r           ( fm_r           )
 );
-
+/* verilator tracing_off */
 jtbiocom_video #(
     .OBJ_PAL      (2'b10),
     .PALETTE_PROM (1),

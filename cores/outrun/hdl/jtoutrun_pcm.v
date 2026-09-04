@@ -1,20 +1,6 @@
-/*  This file is part of JTCORES.
-    JTCORES program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    JTCORES program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with JTCORES.  If not, see <http://www.gnu.org/licenses/>.
-
-    Author: Jose Tejada Gomez. Twitter: @topapate
-    Version: 1.0
-    Date: 16-7-2022 */
+/* SPDX-FileCopyrightText: 2026 Jose Tejada Gomez
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * Date: 16-7-2022 */
 
 // This module represents the 315-5218
 // Clock input 16.000MHz on pin 80
@@ -62,6 +48,7 @@ reg  [15:0] active;     // high for active channels, debug only
 reg  [ 7:0] cfg_en;
 reg  [ 7:0] delta, cfg_din;
 reg         cfg_we, was_enb;
+reg         wr_en; // st==7 actually changed cfg_en, so st==8 must write it back
 wire        cfg_cpu_collision, cfg_ram_we;
 
 reg  [23: 0] cur_addr;
@@ -141,7 +128,7 @@ always @* begin
 
     vol_mux = st[0] ? vol_left : vol_right;
     case( st )
-         8: begin cfg_we = 1;        cfg_din = cfg_en; end
+         8: begin cfg_we = wr_en;    cfg_din = cfg_en; end
          9: begin cfg_we = 1;        cfg_din = cur_addr[ 7: 0]; end
         10: begin cfg_we = !was_enb; cfg_din = cur_addr[15: 8]; end
         11: begin cfg_we = !was_enb; cfg_din = cur_addr[23:16]; end
@@ -176,6 +163,7 @@ always @(posedge clk) begin
         delta     <= 0;
         loop_addr <= 0;
         cfg_en    <= 0;
+        wr_en     <= 0;
         vol_left  <= 0;
         vol_right <= 0;
         was_enb   <= 0;
@@ -198,12 +186,16 @@ always @(posedge clk) begin
             4: delta            <= cfg_data;
             5: loop_addr[15: 8] <= cfg_data;
             6: loop_addr[23:16] <= cfg_data;
-            7: if( cur_addr[23:16] == (cfg_data + 8'b1) ) begin
-                if( cfg_en[1] ) begin
-                    cfg_en[0]     <= 1; // no loop
-                    cur_addr[7:0] <= 0;
-                end else
-                    cur_addr <= {loop_addr,8'd0}; // loop around
+            7: begin
+                wr_en <= 0;
+                if( cur_addr[23:16] == (cfg_data + 8'b1) ) begin
+                    if( cfg_en[1] ) begin
+                        cfg_en[0]     <= 1; // no loop
+                        cur_addr[7:0] <= 0;
+                        wr_en         <= 1; // update cfg_en
+                    end else
+                        cur_addr <= {loop_addr,8'd0}; // loop around
+                end
             end
             8: if( !cfg_en[0] ) begin
                 rom_cs   <= 1;

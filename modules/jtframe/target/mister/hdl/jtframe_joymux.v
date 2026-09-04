@@ -1,28 +1,13 @@
-/*  This file is part of JTFRAME.
-    JTFRAME program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    JTFRAME program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with JTFRAME.  If not, see <http://www.gnu.org/licenses/>.
-
-    Author: Jose Tejada Gomez. Twitter: @topapate
-    Version: 1.0
-    Date: 24-10-2021
-
-    [MiSTer-DB9 BEGIN] - DB9MD/SNAC8 + Saturn fork
-    Rewrites the original DB15-only joymux to delegate to the unified
-    `joydb` wrapper (joydb.sv) which handles DB9MD / DB15 / Saturn modes
-    with a per-pin push-pull mask (USER_PP_DRIVE) and Saturn key gating.
-    The USB fallback (`assign_joy`) is preserved for non-DB modes.
-    [MiSTer-DB9 END]
-*/
+/* SPDX-FileCopyrightText: 2026 Jose Tejada Gomez
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * Date: 24-10-2021
+ *
+ * [MiSTer-DB9 BEGIN] - DB9MD/SNAC8 + Saturn fork
+ * Rewrites the original DB15-only joymux to delegate to the unified
+ * `joydb` wrapper (joydb.sv) which handles DB9MD / DB15 / Saturn modes
+ * with a per-pin push-pull mask (USER_PP_DRIVE) and Saturn key gating.
+ * The USB fallback (`assign_joy`) is preserved for non-DB modes.
+ * [MiSTer-DB9 END] */
 
 module jtframe_joymux(
     input             rst,
