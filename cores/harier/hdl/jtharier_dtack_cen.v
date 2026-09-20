@@ -5,6 +5,7 @@
 module jtharier_dtack_cen(
     input         rst,
     input         clk,
+    input         hangon,
     output        cpu_cen,
     output        cpu_cenb,
     input         UDSn, LDSn,
@@ -20,24 +21,27 @@ module jtharier_dtack_cen(
     output  [15:0] fworst  // average cpu_cen frequency in kHz
 );
 
+wire [8:0] num = hangon ?  9'd1 :  9'd173;
+wire [9:0] den = hangon ? 10'd8 : 10'd871;
+
 jtframe_68kdtack_cen #(.W(10)) u_dtack(
-    .rst        ( rst       ),
-    .clk        ( clk       ),
-    .cpu_cen    ( cpu_cen   ),
-    .cpu_cenb   ( cpu_cenb  ),
-    .bus_cs     ( bus_cs    ),
-    .bus_busy   ( bus_busy  ),
-    .bus_legit  ( bus_legit ),
-    .bus_ack    ( 1'b0      ),
-    .ASn        ( ASn       ),
-    .DSn        ({UDSn,LDSn}),
-    .num        (  9'd173   ),
-    .den        ( 10'd871   ),
-    .wait2      ( 1'b0      ),
-    .wait3      ( 1'b0      ),
-    .DTACKn     ( DTACKn    ),
-    .fave       ( fave      ),
-    .fworst     ( fworst    )
+    .rst        ( rst         ),
+    .clk        ( clk         ),
+    .cpu_cen    ( cpu_cen     ),
+    .cpu_cenb   ( cpu_cenb    ),
+    .bus_cs     ( bus_cs      ),
+    .bus_busy   ( bus_busy    ),
+    .bus_legit  ( bus_legit   ),
+    .bus_ack    ( 1'b0        ),
+    .ASn        ( ASn         ),
+    .DSn        ( {UDSn,LDSn} ),
+    .num        ( num         ),
+    .den        ( den         ),
+    .wait2      ( 1'b0        ),
+    .wait3      ( 1'b0        ),
+    .DTACKn     ( DTACKn      ),
+    .fave       ( fave        ),
+    .fworst     ( fworst      )
 );
 
 endmodule
